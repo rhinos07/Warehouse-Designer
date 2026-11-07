@@ -1,0 +1,57 @@
+name: Build, test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Daily: the page validates with the spec repos' current main.
+    - cron: "17 4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: rhinos07/Topology-as-Code, path: specs/Topology-as-Code }
+      - uses: actions/checkout@v4
+        with: { repository: rhinos07/Allocation-as-Code, path: specs/Allocation-as-Code }
+      - uses: actions/checkout@v4
+        with: { repository: rhinos07/OrderOrchestration-as-Code, path: specs/OrderOrchestration-as-Code }
+      - uses: actions/checkout@v4
+        with: { repository: rhinos07/MasterData-as-Code, path: specs/MasterData-as-Code }
+      - uses: actions/checkout@v4
+        with: { repository: rhinos07/Warehouse-as-Code, path: specs/Warehouse-as-Code }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run bundle
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with: { path: dist }
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
