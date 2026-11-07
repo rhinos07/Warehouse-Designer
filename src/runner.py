@@ -110,6 +110,29 @@ DIAGRAM_KINDS = ["storage_type", "door", "work_center", "reporting_point", "acti
                  "controller", "equipment", "can_edge", "movement_rule"]
 
 
+EDITABLE_FILES = ["storage.yaml", "wcs.yaml", "lanes.yaml", "movement_rules.yaml"]
+
+
+def sources(base, path):
+    """The building's imported files the editor changes, by file name - the
+    way compile.py finds them - as paths inside the repo."""
+    import posixpath
+
+    import yaml
+
+    try:
+        with open(f"{base}/{path}", encoding="utf-8") as file:
+            imports = ((yaml.safe_load(file) or {}).get("warehouse") or {}).get("imports") or []
+    except (OSError, yaml.YAMLError, AttributeError):
+        return {}
+    found = {}
+    for entry in imports:
+        name = posixpath.basename(str(entry))
+        if name in EDITABLE_FILES and name not in found:
+            found[name] = posixpath.normpath(posixpath.join(posixpath.dirname(path), str(entry)))
+    return found
+
+
 def compile_buildings():
     """Every Topology building, compiled with Topology's own compile.py: the
     entities the diagram needs, and storage points only as counts."""
@@ -126,7 +149,7 @@ def compile_buildings():
         if os.path.exists(target):
             os.remove(target)
         code, output = run_script(f"{base}/tools/compile.py", [path, "--output", target], cwd=base)
-        building = {"path": path, "ok": code == 0 and os.path.exists(target)}
+        building = {"path": path, "ok": code == 0 and os.path.exists(target), "sources": sources(base, path)}
         if not building["ok"]:
             building["error"] = output.replace(f"{ROOT}/", "")[-2000:]
         else:

@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import type { PyodideInterface } from "pyodide";
 import runnerSource from "./runner.py?raw";
-import { DATA_DIRS, type FromWorker, type RepoName, type ToWorker, type UserFile } from "./types";
+import { DATA_DIRS, type CheckResult, type FromWorker, type RepoName, type ToWorker, type UserFile } from "./types";
 
 interface Specs {
   generatedAt: string;
@@ -27,7 +27,13 @@ async function init(base: string) {
   const info = Object.fromEntries(
     Object.entries(specs.repos).map(([name, repo]) => [name, { commit: repo.commit, files: Object.keys(repo.files).length }]),
   );
-  post({ type: "ready", specs: info, generatedAt: specs.generatedAt });
+  const examples: UserFile[] = [];
+  for (const [repo, { files }] of Object.entries(specs.repos)) {
+    for (const [path, text] of Object.entries(files)) {
+      if (DATA_DIRS.some((d) => path.startsWith(`${d}/`))) examples.push({ repo: repo as RepoName, path, text });
+    }
+  }
+  post({ type: "ready", specs: info, generatedAt: specs.generatedAt, examples });
 }
 
 function write(path: string, text: string) {
@@ -72,17 +78,27 @@ function run(repos: RepoName[], files: UserFile[] | null) {
   post({ type: "done" });
 }
 
-function compile(files: UserFile[] | null) {
+/** Compile every building; `validate` also runs Topology's validate.py for these customer folders. */
+function compile(files: UserFile[] | null, validate: string[] = []) {
   prepare(files);
   const buildings = JSON.parse(py.runPython("runner.compile_buildings()"));
-  post({ type: "topology", buildings });
+  const checks: CheckResult[] = [];
+  if (validate.length) {
+    py.globals.set("_repos", py.toPy(["Topology-as-Code"]));
+    for (const check of toJs<Record<string, unknown>[]>("runner.plan(_repos)")) {
+      if (!validate.includes(String(check.title))) continue;
+      py.globals.set("_check", py.toPy(check));
+      checks.push(toJs("runner.run_check(_check)"));
+    }
+  }
+  post({ type: "topology", buildings, checks: validate.length ? checks : undefined });
 }
 
 self.onmessage = async (event: MessageEvent<ToWorker>) => {
   const message = event.data;
   try {
     if (message.type === "init") await init(message.base);
-    else if (message.type === "compile") compile(message.files);
+    else if (message.type === "compile") compile(message.files, message.validate);
     else run(message.repos, message.files);
   } catch (error) {
     post({ type: "error", message: error instanceof Error ? error.message : String(error) });

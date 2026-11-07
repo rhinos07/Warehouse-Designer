@@ -11,7 +11,7 @@ It runs without a server and is published with GitHub Pages:
 
 Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
-## Status: phase 2, read-only validation and topology view
+## Status: phase 3, validation, topology view and topology editing
 
 - **Open a folder** with YAML definitions and check it with the repos' own
   validators: each repo's `tools/validate.py` per customer,
@@ -26,6 +26,21 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   - movement rules ("darf") can be shown on top;
   - clicking a node shows its data;
   - after a check, nodes named in findings are marked red.
+- **Edit the topology** in the diagram ("Bearbeiten"):
+  - add doors, work centers and reporting points;
+  - draw connections ("kann") between nodes;
+  - delete connections, lanes and conveyor segments, and delete elements
+    once nothing in the building refers to them.
+
+  The page assigns ids (e.g. `DOOR_04`), which do not change afterwards.
+  After every edit the page recompiles the building and runs Topology's
+  `validate.py` for that customer, so a bad edit shows at once and can be
+  undone.
+- **Review and save:** unsaved edits are listed with a diff per file.
+  - "In Ordner speichern" writes them back into the opened folder (Edge and
+    Chrome). It refuses if a file changed on disk in the meantime.
+  - Elsewhere, or for the example data, the changed files can be
+    downloaded instead.
 - Files never leave the browser.
 
 A folder can be a single repo checkout (or a synced SharePoint/OneDrive copy
@@ -35,7 +50,13 @@ schemas and catalogs (`elements/`) always come from the page's build.
 
 Opening a folder uses the File System Access API in Edge and Chrome; other
 browsers fall back to a folder upload field, which is enough for reading.
-Writing files (later phases) will need Edge or Chrome.
+Saving into the folder needs Edge or Chrome; the browser asks for write
+permission on the first save.
+
+Edits change the YAML files as text, not by rewriting them (`src/yamlEdit.ts`):
+only the added or removed list item changes. Comments, quoting, alignment and
+blank lines stay as they are, so the saved file diffs like a hand edit and can
+go through the repo's usual pull request review.
 
 ## How it works
 
@@ -63,7 +84,7 @@ the page follows changes in the spec repos.
 ```bash
 npm ci
 SPECS_DIR=..  npm run bundle   # directory holding the spec repos side by side
-npm run dev                    # or: npm run build && npm run test:e2e
+npm run dev                    # or: npm run build && npm run test:unit && npm run test:e2e
 ```
 
 `PYODIDE_DIR=<dir>` makes `npm run bundle` take the wheels from a local

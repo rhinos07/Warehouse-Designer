@@ -8,6 +8,8 @@ export interface ScannedFile {
 export interface Scan {
   rootName: string;
   files: ScannedFile[];
+  /** The opened folder, if the browser can write to it (File System Access API). */
+  handle?: DirectoryHandle;
 }
 
 const SKIP_DIRS = new Set([".git", "node_modules", ".venv", "__pycache__", "dist"]);
@@ -15,15 +17,21 @@ const TEXT_FILE = /\.(ya?ml|json)$/i;
 const MAX_FILES = 5000;
 
 // Chromium's File System Access API; not in TypeScript's DOM lib yet.
+type Permission = "granted" | "denied" | "prompt";
 interface DirectoryHandle {
   kind: "directory";
   name: string;
   values(): AsyncIterable<DirectoryHandle | FileHandle>;
+  getDirectoryHandle(name: string): Promise<DirectoryHandle>;
+  getFileHandle(name: string): Promise<FileHandle>;
+  queryPermission(options: { mode: "readwrite" }): Promise<Permission>;
+  requestPermission(options: { mode: "readwrite" }): Promise<Permission>;
 }
 interface FileHandle {
   kind: "file";
   name: string;
   getFile(): Promise<File>;
+  createWritable(): Promise<{ write(text: string): Promise<void>; close(): Promise<void> }>;
 }
 type PickerWindow = Window & { showDirectoryPicker?: (options?: { mode?: "read" | "readwrite" }) => Promise<DirectoryHandle> };
 
@@ -43,7 +51,7 @@ export async function pickDirectory(): Promise<Scan> {
     }
   }
   await walk(root, "");
-  return { rootName: root.name, files };
+  return { rootName: root.name, files, handle: root };
 }
 
 /** Fallback for browsers without the File System Access API (read-only). */
@@ -88,7 +96,36 @@ export function assign(scan: Scan, layout: Layout, chosen?: RepoName): UserFile[
     } else {
       repo = layout.kind === "repo" ? layout.repo : chosen;
     }
-    if (repo && isData(path)) out.push({ repo, path, text: file.text });
+    if (repo && isData(path)) out.push({ repo, path, text: file.text, source: file.path });
   }
   return out;
+}
+
+async function fileHandle(root: DirectoryHandle, path: string): Promise<FileHandle> {
+  const parts = path.split("/");
+  let dir = root;
+  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
+  return dir.getFileHandle(parts[parts.length - 1]);
+}
+
+/**
+ * Writes files back into the opened folder. Refuses, writing nothing, if any
+ * of them changed on disk since the folder was read (`expected`).
+ */
+export async function writeFiles(root: DirectoryHandle, files: { path: string; text: string; expected: string }[]): Promise<void> {
+  if ((await root.queryPermission({ mode: "readwrite" })) !== "granted" && (await root.requestPermission({ mode: "readwrite" })) !== "granted") {
+    throw new Error("Ohne Schreibrecht für den Ordner kann nicht gespeichert werden.");
+  }
+  const changed: string[] = [];
+  for (const file of files) {
+    if ((await (await (await fileHandle(root, file.path)).getFile()).text()) !== file.expected) changed.push(file.path);
+  }
+  if (changed.length) {
+    throw new Error(`Nicht gespeichert: ${changed.join(", ")} wurde inzwischen außerhalb geändert. Ordner neu öffnen und die Änderung wiederholen.`);
+  }
+  for (const file of files) {
+    const writable = await (await fileHandle(root, file.path)).createWritable();
+    await writable.write(file.text);
+    await writable.close();
+  }
 }
