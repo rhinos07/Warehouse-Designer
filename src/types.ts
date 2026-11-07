@@ -12,8 +12,9 @@ export const DATA_DIRS = ["customers", "sites", "examples"];
 
 export interface UserFile {
   repo: RepoName;
-  path: string;
+  path: string; // inside the repo, e.g. customers/x/company.yaml
   text: string;
+  source?: string; // path inside the opened folder, for writing back
 }
 
 export interface CheckInfo {
@@ -45,18 +46,20 @@ export interface Building {
   name?: string;
   entities?: Record<string, Entity[]>;
   point_counts?: Record<string, number>;
+  /** Imported files the editor changes, by file name (storage.yaml, wcs.yaml, lanes.yaml, movement_rules.yaml). */
+  sources?: Record<string, string>;
 }
 
 export type ToWorker =
   | { type: "init"; base: string }
   | { type: "run"; repos: RepoName[]; files: UserFile[] | null }
-  | { type: "compile"; files: UserFile[] | null };
+  | { type: "compile"; files: UserFile[] | null; validate?: string[] };
 
 export type FromWorker =
   | { type: "status"; text: string }
-  | { type: "ready"; specs: SpecsInfo; generatedAt: string }
+  | { type: "ready"; specs: SpecsInfo; generatedAt: string; examples: UserFile[] }
   | { type: "plan"; checks: CheckInfo[] }
   | { type: "result"; result: CheckResult }
   | { type: "done" }
-  | { type: "topology"; buildings: Building[] }
+  | { type: "topology"; buildings: Building[]; checks?: CheckResult[] }
   | { type: "error"; message: string };

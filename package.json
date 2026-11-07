@@ -8,18 +8,21 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173 --strictPort",
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "test:unit": "esbuild tests/unit.ts --bundle --platform=node --format=esm --log-level=warning --outfile=node_modules/.cache/unit.mjs && node node_modules/.cache/unit.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "1.1.4",
     "@xyflow/react": "12.3.6",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "yaml": "2.6.1"
   },
   "devDependencies": {
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "4.3.4",
+    "esbuild": "0.24.2",
     "playwright": "1.63.0",
     "pyodide": "0.27.2",
     "typescript": "5.6.3",

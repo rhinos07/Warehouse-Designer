@@ -84,3 +84,17 @@ Phase 2 status: the "Topologie" tab draws each building as a flow diagram. The p
 - **Check findings:** after "Prüfung starten", nodes named in Topology findings are marked red.
 - **Why a flow diagram and not a floor plan:** the data has no coordinates for storage types, doors or work centers; only generated storage points have a position.
 - **Not shown yet:** activity areas and the aisle/bay level inside a storage type.
+
+Phase 3 status: the topology can be edited in the diagram (checkbox "Bearbeiten").
+
+| Topic | Decision / implementation |
+|---|---|
+| Scope | Add doors, work centers and reporting points. Draw explicit connections (`lanes.yaml` `connections`). Delete connections, lanes and conveyor segments. Delete doors, work centers and reporting points once no connection, lane, conveyor or movement rule of the building refers to them. |
+| Ids | Assigned by the tool and never changed afterwards. Elements get the next number above the highest in use (`DOOR_04`, `WC_PACKING_01`, `RP_01`), so the id of a removed element is never reused: with `removal_policy: deactivate` the WMS still knows it. Connections are named after their ends (`MAN_DOOR_04_TO_STAGING`). |
+| Names | The schemas have no display name for doors, work centers or reporting points; work centers and reporting points take the free-text `description`. A display-name field would be a schema change in Topology-as-Code. |
+| YAML | Text splices instead of rewriting the file: only the changed list item differs. A round trip through a YAML library would reformat inline maps, lists and aligned comments; the splice keeps them. `tests/unit.ts` removes each of the 82 list items in the example files and checks that everything else stays the same. |
+| Feedback | After every edit the page recompiles the building and runs Topology's `validate.py` for the customer, in about a second. Findings show above the diagram and as red nodes. Every edit can be undone. |
+| Saving | Unsaved edits are listed with a diff per file. "In Ordner speichern" writes into the opened folder (Edge, Chrome). It writes nothing if any of the files changed on disk since the folder was read. Without a writable folder, the changed files can be downloaded. |
+| Cross-repo references | A door or work center used by Allocation or OrderOrchestration is caught by "Prüfung starten" (Warehouse-as-Code's site check), not by the per-edit validation, which covers Topology only. |
+
+Not editable yet: attributes of existing elements, storage types (sections, rack templates, generators), lanes and the main conveyor (only deletable), movement rules, controllers. Next candidates: an attribute form generated from the JSON Schemas (phase 4) and movement rules.

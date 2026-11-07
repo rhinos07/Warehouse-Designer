@@ -7,10 +7,13 @@ import {
   ReactFlow,
   type Edge,
   type Node,
+  type ReactFlowInstance,
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { EditPanel, type Form } from "./EditPanel";
+import { EditError, ENDPOINT_KINDS, HOME, removeLink, removeNode, usages, type Change, type Files } from "./editor";
 import { buildGraph, findingsFor, KIND_LABEL, MODE_LABEL, type NodeKind, type TopoEdge, type TopoNode } from "./graph";
 import type { Building, Entity } from "./types";
 
@@ -18,6 +21,8 @@ const EDGE_COLOR: Record<string, string> = {
   conveyor: "#2f6fdb",
   lane: "#1f8a8a",
   forklift: "#d9822b",
+  tugger: "#a0522d",
+  amr: "#c2185b",
   walking: "#3f9a4a",
   controller_internal: "#8a94a3",
   rule: "#7b4fd6",
@@ -46,12 +51,50 @@ function TopoNodeView({ data, selected }: NodeProps<Node<TopoNodeData>>) {
 }
 const nodeTypes = { topo: TopoNodeView };
 
-export function TopologyView({ buildings, findings }: { buildings: Building[]; findings: string[] }) {
-  const [index, setIndex] = useState(() => Math.max(0, buildings.findIndex((b) => b.ok)));
+export function TopologyView({ buildings, findings, files, onChange, busy = false }: {
+  buildings: Building[];
+  findings: string[];
+  /** Topology-as-Code files by repo path; with onChange, the diagram can be edited. */
+  files?: Files;
+  onChange?: (change: Change) => void;
+  busy?: boolean;
+}) {
+  const [path, setPath] = useState(() => (buildings.find((b) => b.ok) ?? buildings[0])?.path);
   const [showRules, setShowRules] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const building = buildings[index];
+  const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
+  const [form, setForm] = useState<Form | null>(null);
+  const [error, setError] = useState("");
+  const building = buildings.find((b) => b.path === path) ?? buildings[0];
   const graph = useMemo(() => (building?.ok ? buildGraph(building) : null), [building]);
+  const [flow, setFlow] = useState<ReactFlowInstance<Node<TopoNodeData>> | null>(null);
+  // An edit can add nodes anywhere in the layout: keep the whole building in view.
+  const nodeCount = graph?.nodes.length ?? 0;
+  useEffect(() => {
+    if (!flow) return;
+    // Two frames: React Flow takes the new nodes into its store, then the layout settles.
+    let frame = requestAnimationFrame(() => (frame = requestAnimationFrame(() => flow.fitView({ padding: 0.08 }))));
+    return () => cancelAnimationFrame(frame);
+  }, [flow, nodeCount]);
+  const canEdit = Boolean(files && onChange && building?.ok && building.sources);
+  const edit = editing && canEdit;
+
+  function select(node: string | null, edge: string | null = null) {
+    setSelectedId(node);
+    setSelectedEdge(edge);
+    setForm(null);
+    setError("");
+  }
+  function attempt(make: () => Change) {
+    try {
+      const change = make();
+      onChange!(change);
+      select(change.select ?? null);
+    } catch (e) {
+      setError(e instanceof EditError || e instanceof Error ? e.message : String(e));
+    }
+  }
 
   const flowNodes = useMemo<Node<TopoNodeData>[]>(
     () =>
@@ -63,6 +106,7 @@ export function TopologyView({ buildings, findings }: { buildings: Building[]; f
         height: n.height,
         data: { node: n, findings: findingsFor(n.id, findings) },
         selected: n.id === selectedId,
+        connectable: ENDPOINT_KINDS.includes(n.kind),
       })) ?? [],
     [graph, findings, selectedId],
   );
@@ -71,15 +115,16 @@ export function TopologyView({ buildings, findings }: { buildings: Building[]; f
     return [...graph.can, ...(showRules ? graph.rules : [])].map((e) => {
       const color = colorOf(e);
       const marker = { type: MarkerType.ArrowClosed, color, width: 16, height: 16 };
+      const chosen = e.id === selectedEdge;
       return {
         id: e.id,
         source: e.source,
         target: e.target,
         label: e.label,
-        className: `edge-${e.kind}`,
+        className: `edge-${e.kind}${chosen ? " chosen" : ""}`,
         style: {
           stroke: color,
-          strokeWidth: e.kind === "rule" ? 1.5 : 2,
+          strokeWidth: chosen ? 4 : e.kind === "rule" ? 1.5 : 2,
           strokeDasharray: e.kind === "rule" || e.mode === "controller_internal" ? "6 4" : undefined,
         },
         labelStyle: { fill: color, fontSize: 11 },
@@ -88,25 +133,77 @@ export function TopologyView({ buildings, findings }: { buildings: Building[]; f
         markerStart: e.both ? marker : undefined,
       };
     });
-  }, [graph, showRules]);
+  }, [graph, showRules, selectedEdge]);
 
   if (!buildings.length) return <p className="status">Keine Topology-Hallen gefunden.</p>;
   const selected = graph?.nodes.find((n) => n.id === selectedId);
+  const edge = graph?.can.find((e) => e.id === selectedEdge);
+  const kindOf = (id: string) => graph?.nodes.find((n) => n.id === id)?.kind;
+
+  let aside: ReactNode;
+  if (edit && form && graph) {
+    aside = (
+      <EditPanel
+        key={JSON.stringify(form)}
+        form={form}
+        building={building}
+        files={files!}
+        graph={graph}
+        onChange={(change) => attempt(() => change)}
+        onCancel={() => setForm(null)}
+      />
+    );
+  } else if (edit && edge) {
+    aside = <EdgeDetails edge={edge} onRemove={() => attempt(() => removeLink(building, files!, edge.sourceType ?? "", edge.entityId))} />;
+  } else if (selected && graph) {
+    const removable = edit && ["door", "work_center", "reporting_point"].includes(selected.kind);
+    const used = removable ? usages(building, files!, selected.id) : [];
+    aside = (
+      <Details node={selected} building={building} graph={graph} findings={findingsFor(selected.id, findings)}>
+        {edit && (
+          <div className="edit-actions">
+            {ENDPOINT_KINDS.includes(selected.kind) && (
+              <button onClick={() => setForm({ type: "connection", from: selected.id })} disabled={busy}>Verbindung hinzufügen …</button>
+            )}
+            {removable && (
+              <button
+                className="danger"
+                onClick={() => attempt(() => removeNode(building, files!, selected.kind, selected.id))}
+                disabled={busy || used.length > 0}
+                title={used.length ? `Wird noch verwendet: ${used.join(", ")}` : undefined}
+              >
+                {selected.id} löschen
+              </button>
+            )}
+            {removable && used.length > 0 && <p className="hint">Löschen erst möglich, wenn nichts mehr darauf verweist: {used.join(", ")}.</p>}
+          </div>
+        )}
+      </Details>
+    );
+  } else {
+    aside = (
+      <p className="hint">
+        {edit
+          ? "Knoten anklicken, um ihn zu bearbeiten, oder eine Verbindung von einem Knoten zum anderen ziehen. Eine Verbindung anklicken, um sie zu löschen."
+          : "Einen Knoten anklicken, um seine Daten, Verbindungen und Regeln zu sehen."}
+      </p>
+    );
+  }
 
   return (
-    <div className="topology">
+    <div className={`topology${edit ? " editing" : ""}`}>
       <div className="topo-toolbar">
         <label>
           Halle{" "}
           <select
-            value={index}
+            value={building.path}
             onChange={(e) => {
-              setIndex(Number(e.target.value));
-              setSelectedId(null);
+              setPath(e.target.value);
+              select(null);
             }}
           >
-            {buildings.map((b, i) => (
-              <option key={b.path} value={i}>
+            {buildings.map((b) => (
+              <option key={b.path} value={b.path}>
                 {b.ok ? `${b.customer} / ${b.facility} / ${b.name ?? b.building}` : `${b.path} (Fehler)`}
               </option>
             ))}
@@ -116,6 +213,26 @@ export function TopologyView({ buildings, findings }: { buildings: Building[]; f
           <input type="checkbox" checked={showRules} onChange={(e) => setShowRules(e.target.checked)} /> Bewegungsregeln
           („darf“) einblenden
         </label>
+        {files && onChange && (
+          <label>
+            <input
+              type="checkbox"
+              checked={editing}
+              onChange={(e) => {
+                setEditing(e.target.checked);
+                select(null);
+              }}
+            />{" "}
+            Bearbeiten
+          </label>
+        )}
+        {edit && (
+          <div className="actions">
+            <button className="secondary" onClick={() => setForm({ type: "door" })} disabled={busy}>+ Tor</button>
+            <button className="secondary" onClick={() => setForm({ type: "work_center" })} disabled={busy}>+ Arbeitsplatz</button>
+            <button className="secondary" onClick={() => setForm({ type: "reporting_point" })} disabled={busy}>+ Meldepunkt</button>
+          </div>
+        )}
       </div>
 
       {!building.ok && (
@@ -124,6 +241,7 @@ export function TopologyView({ buildings, findings }: { buildings: Building[]; f
           <pre>{building.error}</pre>
         </div>
       )}
+      {error && <p className="status error" data-edit-error>{error}</p>}
 
       {graph && (
         <div className="topo-main">
@@ -137,22 +255,23 @@ export function TopologyView({ buildings, findings }: { buildings: Building[]; f
               fitViewOptions={{ padding: 0.08 }}
               minZoom={0.1}
               nodesDraggable={false}
-              nodesConnectable={false}
-              onNodeClick={(_, n) => setSelectedId(n.id)}
-              onPaneClick={() => setSelectedId(null)}
+              nodesConnectable={edit && !busy}
+              isValidConnection={(c) => c.source !== c.target && ENDPOINT_KINDS.includes(kindOf(c.target ?? "") ?? "")}
+              onConnect={(c) => {
+                select(null);
+                setForm({ type: "connection", from: c.source, to: c.target });
+              }}
+              onNodeClick={(_, n) => select(n.id)}
+              onEdgeClick={(_, e) => edit && e.id.startsWith("can:") && select(null, e.id)}
+              onPaneClick={() => select(null)}
+              onInit={setFlow}
               proOptions={{ hideAttribution: true }}
             >
               <Background />
               <Controls showInteractive={false} />
             </ReactFlow>
           </div>
-          <aside className="topo-details">
-            {selected ? (
-              <Details node={selected} building={building} graph={graph} findings={findingsFor(selected.id, findings)} />
-            ) : (
-              <p className="hint">Einen Knoten anklicken, um seine Daten, Verbindungen und Regeln zu sehen.</p>
-            )}
-          </aside>
+          <aside className="topo-details">{aside}</aside>
         </div>
       )}
 
@@ -176,11 +295,44 @@ export function TopologyView({ buildings, findings }: { buildings: Building[]; f
   );
 }
 
-function Details({ node, building, graph, findings }: {
+const SOURCE_LABEL: Record<string, string> = {
+  connection: "Verbindung",
+  lane: "Fahrweg",
+  conveyor_segment: "Förderabschnitt",
+  conveyor_main: "Hauptförderer",
+  controller_internal: "Steuerung (intern)",
+};
+
+function EdgeDetails({ edge, onRemove }: { edge: TopoEdge; onRemove: () => void }) {
+  const type = edge.sourceType ?? "";
+  const removable = HOME[type]?.[0] === "lanes.yaml";
+  return (
+    <div data-edge={edge.entityId}>
+      <h3>{edge.entityId}</h3>
+      <p className="hint">{SOURCE_LABEL[type] ?? type}</p>
+      <p>
+        {edge.source} {edge.both ? "↔" : "→"} {edge.target} · {MODE_LABEL[edge.mode ?? ""] ?? edge.mode}
+      </p>
+      {type === "lane" && <p className="hint">Ein Fahrweg verbindet alle seine Knoten; Löschen entfernt ihn ganz.</p>}
+      {removable ? (
+        <button className="danger" onClick={onRemove}>{edge.entityId} löschen</button>
+      ) : (
+        <p className="hint">
+          {type === "controller_internal"
+            ? "Ergibt sich aus der gemeinsamen Steuerung der Knoten – dort ändern."
+            : "Der Hauptförderer (conveyor_main) wird hier nicht bearbeitet."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Details({ node, building, graph, findings, children }: {
   node: TopoNode;
   building: Building;
   graph: ReturnType<typeof buildGraph>;
   findings: string[];
+  children?: ReactNode;
 }) {
   const connections = graph.can.filter((e) => e.source === node.id || e.target === node.id);
   const rules = graph.rules.filter((e) => e.source === node.id || e.target === node.id);
@@ -189,6 +341,7 @@ function Details({ node, building, graph, findings }: {
     <div data-details={node.id}>
       <h3>{node.id}</h3>
       <p className="hint">{KIND_LABEL[node.kind as NodeKind]}</p>
+      {children}
       {findings.length > 0 && (
         <>
           <h4>Befunde aus der Prüfung</h4>

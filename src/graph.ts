@@ -15,6 +15,8 @@ export const MODE_LABEL: Record<string, string> = {
   conveyor: "Förderer",
   lane: "Fahrweg",
   forklift: "Stapler",
+  tugger: "Schlepper",
+  amr: "AMR",
   walking: "zu Fuß",
   controller_internal: "intern",
 };
@@ -44,6 +46,7 @@ export interface TopoEdge {
   mode?: string; // can: transport mode
   allowed?: boolean; // rule: allowed or forbidden
   entityId: string; // can: lane/connection/... id; rule: movement_rule id
+  sourceType?: string; // can: connection, lane, conveyor_segment, conveyor_main, controller_internal
 }
 
 export interface Graph {
@@ -106,7 +109,7 @@ export function buildGraph(building: Building): Graph {
     const mode = String(edge.transport_mode ?? "");
     const item: TopoEdge = {
       id: `can:${source}:${from}:${to}`, source: from, target: to, both: false, kind: "can",
-      label: MODE_LABEL[mode] ?? mode, mode, entityId: source,
+      label: MODE_LABEL[mode] ?? mode, mode, entityId: source, sourceType: String(edge.source_type ?? ""),
     };
     pairs.set(`${source}|${from}|${to}`, item);
     can.push(item);

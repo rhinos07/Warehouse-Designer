@@ -4,6 +4,10 @@
 // 3. A folder with a broken split rule fails exactly that check, read through
 //    the <input webkitdirectory> fallback (the folder picker cannot be scripted).
 // 4. A topology finding marks the node it names in the diagram.
+// 5. Editing the example data: add elements and a connection, each validated
+//    by Topology's validate.py at once; delete; undo.
+// 6. Saving into an opened folder (a scripted folder picker), and refusing to
+//    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -52,6 +56,173 @@ function brokenFolder(repo, file, from, to) {
     fs.writeFileSync(path.join(root, rel), content);
   }
   return root;
+}
+
+
+async function waitForCompile(page) {
+  await page.locator('[data-topology="fresh"]').waitFor({ timeout: TIMEOUT });
+}
+
+/** Applies one edit through the UI and waits until the page recompiled and revalidated. */
+async function editAndValidate(page, action) {
+  const before = await page.locator("[data-changes] .change-log li").count();
+  await action();
+  await page.waitForFunction((n) => document.querySelectorAll("[data-changes] .change-log li").length === n + 1, before, { timeout: TIMEOUT });
+  await waitForCompile(page);
+  return page.locator("[data-validation]").getAttribute("data-validation");
+}
+
+async function openHall(page, hall) {
+  await page.getByRole("tab", { name: "Topologie" }).click();
+  const select = page.locator(".topo-toolbar select");
+  await select.waitFor({ state: "visible", timeout: TIMEOUT });
+  await select.selectOption({ label: (await select.locator("option").allTextContents()).find((h) => h.includes(hall)) });
+}
+
+async function editTests(browser) {
+  const page = await browser.newPage();
+  await page.addInitScript(() => delete window.showDirectoryPicker);
+  page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
+  await page.goto(URL);
+  await openHall(page, "/ PA11 /");
+  await page.locator('[data-node="HBR"]').waitFor({ state: "visible", timeout: TIMEOUT });
+  await page.getByLabel("Bearbeiten").check();
+
+  let state = await editAndValidate(page, async () => {
+    await page.getByRole("button", { name: "+ Tor" }).click();
+    await page.getByLabel("Art").selectOption({ label: "Ausgang" });
+    await page.getByRole("button", { name: "Hinzufügen" }).click();
+  });
+  check(state === "ok", "a new door passes validate.py");
+  check((await page.locator("[data-changes]").textContent()).includes('staging_section: "STAGING.SEC_STAGING_OUT"'), "an outbound door stages in the outbound section");
+  check(await page.locator('[data-node="DOOR_04"]').isVisible(), "the door gets the next id, DOOR_04, and appears in the diagram");
+  check(await page.locator('[data-details="DOOR_04"]').isVisible(), "the new door is selected");
+
+  const edges = await page.locator(".react-flow__edge").count();
+  state = await editAndValidate(page, async () => {
+    await page.getByRole("button", { name: "Verbindung hinzufügen …" }).click();
+    await page.getByLabel("Nach").selectOption("STAGING");
+    await page.getByLabel("Transportart").selectOption({ label: "Stapler" });
+    await page.getByLabel("Fahrzeit in Minuten (optional)").fill("3");
+    await page.getByRole("button", { name: "Hinzufügen" }).click();
+  });
+  check(state === "ok", "a new connection passes validate.py");
+  check((await page.locator(".react-flow__edge").count()) > edges, "the connection appears in the diagram");
+
+  await page.locator('[data-node="DOOR_04"]').click();
+  check(await page.getByRole("button", { name: "DOOR_04 löschen" }).isDisabled(), "a door still connected cannot be deleted");
+
+  state = await editAndValidate(page, async () => {
+    await page.getByRole("button", { name: "+ Arbeitsplatz" }).click();
+    await page.getByLabel("Prozessschritt").fill("quality_check");
+    await page.getByRole("button", { name: "Hinzufügen" }).click();
+  });
+  check(state === "ok" && (await page.locator('[data-node="WC_QUALITY_CHECK_01"]').isVisible()), "a new work center passes validate.py");
+
+  state = await editAndValidate(page, async () => {
+    await page.getByRole("button", { name: "+ Meldepunkt" }).click();
+    await page.getByRole("button", { name: "Hinzufügen" }).click();
+  });
+  check(state === "ok" && (await page.locator('[data-node="RP_01"]').isVisible()), "a new reporting point passes validate.py");
+
+  const diff = await page.locator("[data-changes]").textContent();
+  check(diff.includes("4 ungespeicherte Änderungen in 3 Dateien"), "the changes panel counts edits and files");
+  for (const text of ['- id: "DOOR_04"', '- id: "MAN_DOOR_04_TO_STAGING"', 'expected_duration: {value: 3, unit: "min"}', '- id: "WC_QUALITY_CHECK_01"', '- id: "RP_01"']) {
+    check(diff.includes(text), `the diff shows ${text}`);
+  }
+  check((await page.locator("[data-changes] a[download]").count()) === 3, "without a writable folder, each changed file can be downloaded");
+
+  // The edge's SVG path has no layout box Playwright can click; dispatch the click it would send.
+  await page.locator(".react-flow__edge[data-id='can:MAN_DOOR_04_TO_STAGING:DOOR_04:STAGING'] .react-flow__edge-interaction").dispatchEvent("click");
+  await page.locator('[data-edge="MAN_DOOR_04_TO_STAGING"]').waitFor();
+  await editAndValidate(page, () => page.getByRole("button", { name: "MAN_DOOR_04_TO_STAGING löschen" }).click());
+  check(!(await page.locator(".react-flow__edge[data-id^='can:MAN_DOOR_04_TO_STAGING']").count()), "a clicked connection can be deleted");
+  await page.locator('[data-node="DOOR_04"]').click();
+  await editAndValidate(page, () => page.getByRole("button", { name: "DOOR_04 löschen" }).click());
+  check(!(await page.locator('[data-node="DOOR_04"]').count()), "an unconnected door can be deleted");
+
+  for (let i = 0; i < 6; i++) {
+    await page.getByRole("button", { name: "Rückgängig" }).click();
+    await waitForCompile(page);
+  }
+  check(!(await page.locator("[data-changes]").count()), "undo takes back every edit");
+  check(!(await page.locator('[data-node="RP_01"], [data-node="DOOR_04"]').count()), "after undo the diagram shows the data as read");
+  await page.close();
+}
+
+/** A scripted folder picker over an in-memory copy of Topology-as-Code's data. */
+function fakeFolder(files) {
+  window.__fs = files;
+  const fileHandle = (path) => ({
+    kind: "file",
+    name: path.split("/").pop(),
+    getFile: async () => ({ text: async () => window.__fs[path] }),
+    createWritable: async () => {
+      let text = "";
+      return { write: async (t) => { text += t; }, close: async () => { window.__fs[path] = text; } };
+    },
+  });
+  const dirHandle = (prefix, name) => ({
+    kind: "directory",
+    name,
+    async *values() {
+      const seen = new Set();
+      for (const path of Object.keys(window.__fs)) {
+        if (!path.startsWith(prefix)) continue;
+        const [head, ...rest] = path.slice(prefix.length).split("/");
+        if (seen.has(head)) continue;
+        seen.add(head);
+        yield rest.length ? dirHandle(`${prefix}${head}/`, head) : fileHandle(path);
+      }
+    },
+    getDirectoryHandle: async (n) => dirHandle(`${prefix}${n}/`, n),
+    getFileHandle: async (n) => {
+      if (!(`${prefix}${n}` in window.__fs)) throw new DOMException("not found", "NotFoundError");
+      return fileHandle(`${prefix}${n}`);
+    },
+    queryPermission: async () => "prompt",
+    requestPermission: async () => "granted",
+  });
+  window.showDirectoryPicker = async () => dirHandle("", "Topology-as-Code");
+}
+
+async function saveTests(browser) {
+  const files = Object.fromEntries(Object.entries(specs.repos["Topology-as-Code"].files).filter(([p]) => p.startsWith("customers/")));
+  const storage = "customers/example_customer/facilities/facility_pa11/buildings/hall_3/structure/storage.yaml";
+  const page = await browser.newPage();
+  await page.addInitScript(fakeFolder, files);
+  page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
+  await page.goto(URL);
+  const open = page.getByRole("button", { name: "Ordner öffnen …" });
+  await page.waitForFunction((b) => !b.disabled, await open.elementHandle(), { timeout: TIMEOUT });
+  await open.click();
+  await page.locator("[data-source]", { hasText: "Topology-as-Code" }).waitFor();
+  await openHall(page, "/ PA11 /");
+  await page.locator('[data-node="HBR"]').waitFor({ state: "visible", timeout: TIMEOUT });
+  await page.getByLabel("Bearbeiten").check();
+  await editAndValidate(page, async () => {
+    await page.getByRole("button", { name: "+ Tor" }).click();
+    await page.getByRole("button", { name: "Hinzufügen" }).click();
+  });
+  await page.getByRole("button", { name: "In Ordner speichern" }).click();
+  await page.locator("[data-saved]").waitFor({ timeout: TIMEOUT });
+  const disk = await page.evaluate(() => window.__fs);
+  check(disk[storage].includes('  - id: "DOOR_04"\n    direction: "inbound"'), "saving writes the new door into storage.yaml");
+  check(disk[storage].startsWith(files[storage].slice(0, files[storage].lastIndexOf("\n    determination_group"))), "the rest of storage.yaml is unchanged, comments included");
+  check(Object.keys(files).every((p) => p === storage || disk[p] === files[p]), "no other file is written");
+  check(!(await page.locator("[data-changes]").count()), "after saving nothing is pending");
+
+  await editAndValidate(page, async () => {
+    await page.getByRole("button", { name: "+ Tor" }).click();
+    await page.getByRole("button", { name: "Hinzufügen" }).click();
+  });
+  check(await page.locator('[data-node="DOOR_05"]').isVisible(), "the next door after a save is DOOR_05");
+  await page.evaluate((p) => { window.__fs[p] += "# changed outside\n"; }, storage);
+  await page.getByRole("button", { name: "In Ordner speichern" }).click();
+  await page.getByText("wurde inzwischen außerhalb geändert").waitFor({ timeout: TIMEOUT });
+  check(!(await page.evaluate((p) => window.__fs[p], storage)).includes("DOOR_05"), "a file changed on disk meanwhile is not overwritten");
+  check(await page.locator("[data-changes]").isVisible(), "the refused edit stays pending");
+  await page.close();
 }
 
 let browser;
@@ -132,6 +303,9 @@ try {
   await page.locator('[data-node="HBR"]').waitFor({ state: "visible" });
   check(await page.locator('[data-node="HBR"]').evaluate((e) => e.classList.contains("has-findings")), "HBR is flagged with its finding");
   check(await page.locator(".topo-node.has-findings").count() === 1, "no other node is flagged");
+
+  await editTests(browser);
+  await saveTests(browser);
 } catch (error) {
   failures.push(String(error));
   console.log(`FAIL ${error}`);
