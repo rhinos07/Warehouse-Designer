@@ -72,10 +72,17 @@ function run(repos: RepoName[], files: UserFile[] | null) {
   post({ type: "done" });
 }
 
+function compile(files: UserFile[] | null) {
+  prepare(files);
+  const buildings = JSON.parse(py.runPython("runner.compile_buildings()"));
+  post({ type: "topology", buildings });
+}
+
 self.onmessage = async (event: MessageEvent<ToWorker>) => {
   const message = event.data;
   try {
     if (message.type === "init") await init(message.base);
+    else if (message.type === "compile") compile(message.files);
     else run(message.repos, message.files);
   } catch (error) {
     post({ type: "error", message: error instanceof Error ? error.message : String(error) });

@@ -32,9 +32,25 @@ export interface CheckResult extends CheckInfo {
 
 export type SpecsInfo = Record<string, { commit: string | null; files: number }>;
 
+/** A compiled entity as Topology's compile.py emits it; only id is guaranteed. */
+export type Entity = { id: string } & Record<string, unknown>;
+
+export interface Building {
+  path: string;
+  ok: boolean;
+  error?: string;
+  customer?: string;
+  facility?: string;
+  building?: string;
+  name?: string;
+  entities?: Record<string, Entity[]>;
+  point_counts?: Record<string, number>;
+}
+
 export type ToWorker =
   | { type: "init"; base: string }
-  | { type: "run"; repos: RepoName[]; files: UserFile[] | null };
+  | { type: "run"; repos: RepoName[]; files: UserFile[] | null }
+  | { type: "compile"; files: UserFile[] | null };
 
 export type FromWorker =
   | { type: "status"; text: string }
@@ -42,4 +58,5 @@ export type FromWorker =
   | { type: "plan"; checks: CheckInfo[] }
   | { type: "result"; result: CheckResult }
   | { type: "done" }
+  | { type: "topology"; buildings: Building[] }
   | { type: "error"; message: string };

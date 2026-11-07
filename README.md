@@ -11,7 +11,7 @@ It runs without a server and is published with GitHub Pages:
 
 Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
-## Status: phase 1, read-only validation
+## Status: phase 2, read-only validation and topology view
 
 - **Open a folder** with YAML definitions and check it with the repos' own
   validators: each repo's `tools/validate.py` per customer,
@@ -19,6 +19,13 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   site manifests, Warehouse-as-Code's cross-repo `tools/check_sites.py`
   (ids across repos and consistency rules R1-R12).
 - **Check the repos' example data** without a folder, e.g. in a meeting.
+- **See each building's topology** as a flow diagram (tab "Topologie"),
+  compiled with Topology-as-Code's own `tools/compile.py`:
+  - nodes are storage types, doors, work centers and reporting points;
+  - edges are the physical connections ("kann"), colored by transport mode;
+  - movement rules ("darf") can be shown on top;
+  - clicking a node shows its data;
+  - after a check, nodes named in findings are marked red.
 - Files never leave the browser.
 
 A folder can be a single repo checkout (or a synced SharePoint/OneDrive copy

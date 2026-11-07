@@ -105,6 +105,48 @@ def findings(output):
     return errors, warnings
 
 
+TOPOLOGY = "Topology-as-Code"
+DIAGRAM_KINDS = ["storage_type", "door", "work_center", "reporting_point", "activity_area",
+                 "controller", "equipment", "can_edge", "movement_rule"]
+
+
+def compile_buildings():
+    """Every Topology building, compiled with Topology's own compile.py: the
+    entities the diagram needs, and storage points only as counts."""
+    import glob
+    import json
+
+    import yaml
+
+    base = f"{ROOT}/{TOPOLOGY}"
+    target = "/tmp/compiled.yaml"
+    buildings = []
+    for warehouse in sorted(glob.glob(f"{base}/customers/*/facilities/*/buildings/*/warehouse.yaml")):
+        path = warehouse[len(base) + 1:]
+        if os.path.exists(target):
+            os.remove(target)
+        code, output = run_script(f"{base}/tools/compile.py", [path, "--output", target], cwd=base)
+        building = {"path": path, "ok": code == 0 and os.path.exists(target)}
+        if not building["ok"]:
+            building["error"] = output.replace(f"{ROOT}/", "")[-2000:]
+        else:
+            with open(target, encoding="utf-8") as file:
+                data = yaml.safe_load(file) or {}
+            entities = data.get("entities") or {}
+            meta = data.get("target") or {}
+            counts = {}
+            for point in entities.get("storage_point") or []:
+                counts[point.get("storage_type")] = counts.get(point.get("storage_type"), 0) + 1
+            building.update(
+                customer=meta.get("tenant"), facility=meta.get("facility"), building=meta.get("building"),
+                name=((entities.get("warehouse") or [{}])[0]).get("name"),
+                entities={kind: entities.get(kind) or [] for kind in DIAGRAM_KINDS},
+                point_counts=counts,
+            )
+        buildings.append(building)
+    return json.dumps(buildings, default=str)
+
+
 def run_check(check):
     started = time.perf_counter()
     code, output = run_script(check["script"], check["argv"], cwd=check["cwd"])
