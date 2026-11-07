@@ -76,3 +76,11 @@ The order of phases 2 to 4 may change after the first user feedback.
 Still open from section 3.4: when definitions live outside Git, the CI checks and pull request review of the repos do not apply to them. The page runs the same checks on demand, but versioning and review separation still need the replacements described there.
 
 Phase 1 status: validation with the repos' own tools works (findings list per check). Still open in phase 1: showing errors in project language instead of the validators' technical messages.
+
+Phase 2 status: the "Topologie" tab draws each building as a flow diagram. The page compiles every `warehouse.yaml` with Topology's own `tools/compile.py`. It then draws storage types, doors, work centers and reporting points (the handover points) as nodes, and the physical connections ("kann": conveyor, lane, forklift, walking, controller-internal) as edges. The layout is computed automatically with dagre.
+
+- **Movement rules** ("darf") can be shown on top, with forbidden rules in red. Rules whose start or target is a wildcard, area or section cannot be drawn as a line; they are listed below the diagram.
+- **Node details:** clicking a node shows its attributes, its storage-point count, its connections and its rules.
+- **Check findings:** after "Prüfung starten", nodes named in Topology findings are marked red.
+- **Why a flow diagram and not a floor plan:** the data has no coordinates for storage types, doors or work centers; only generated storage points have a position.
+- **Not shown yet:** activity areas and the aisle/bay level inside a storage type.
