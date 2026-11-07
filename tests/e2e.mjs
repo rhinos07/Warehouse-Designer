@@ -8,6 +8,9 @@
 //    by Topology's validate.py at once; delete; undo.
 // 7. The data tab: forms from the repos' JSON Schemas for master data, rules
 //    and topology attributes, validated by each repo's validate.py.
+// 8. The order workflows: flow and status diagrams of each order type, new
+//    rules through the data tab's forms, validated by OrderOrchestration's
+//    validate.py and flagged in the diagram.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -296,6 +299,63 @@ async function dataTests(browser) {
   await page.close();
 }
 
+async function workflowTests(browser) {
+  const page = await browser.newPage();
+  page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
+  await page.goto(URL);
+  const open = page.getByRole("button", { name: "Ordner öffnen …" });
+  await page.waitForFunction((b) => !b.disabled, await open.elementHandle(), { timeout: TIMEOUT });
+  const showOrderType = async () => {
+    await page.getByRole("tab", { name: "Aufträge" }).click();
+    await page.locator('[data-workflow="fresh"]').waitFor({ timeout: TIMEOUT });
+    await page.locator(".workflow .topo-toolbar select").selectOption({ label: "example_customer / web / b2c_standard" });
+  };
+  await showOrderType();
+  for (const id of ["order", "split:SPLIT_TO_AUTOSTORE", "split:SPLIT_TO_MANUAL_WAREHOUSE", "trigger:TRIGGER_AUTOSTORE_PICK", "completion:CONSOLIDATE_AFTER_BOTH_SUBORDERS", "action:CONSOLIDATE_AFTER_BOTH_SUBORDERS"]) {
+    check(await page.locator(`[data-flow="${id}"]`).isVisible(), `b2c_standard's flow shows ${id}`);
+  }
+  check(await page.locator('[data-flow="status:completed"].terminal').isVisible(), "terminal statuses are marked");
+
+  await page.locator('[data-flow="completion:CONSOLIDATE_AFTER_BOTH_SUBORDERS"]').click();
+  check((await page.locator('[data-flow-details="completion:CONSOLIDATE_AFTER_BOTH_SUBORDERS"]').textContent()).includes("spawn_order_type: b2c_standard"), "a rule's details show its settings");
+  await page.getByRole("button", { name: "Bearbeiten …", exact: true }).click();
+  await page.locator('[data-form-entry="CONSOLIDATE_AFTER_BOTH_SUBORDERS"]').waitFor();
+  check(true, "a rule opens its form in the data tab");
+
+  await showOrderType();
+  await page.getByRole("button", { name: "+ Split-Regel" }).click();
+  await page.locator('[data-form-entry="new"]').waitFor();
+  await page.locator(".data-form > .sf-object > [data-field=\"id\"] input").fill("SPLIT_TO_SHUTTLE");
+  await page.locator('[data-field="condition"] input').fill("no_such_reason");
+  let state = await applyAndValidate(page, "Anlegen");
+  check(state === "failed" && (await page.locator("[data-validation]").textContent()).includes("no_such_reason"), "a split rule with an unknown reason fails validate.py");
+  await showOrderType();
+  check(await page.locator('[data-flow="split:SPLIT_TO_SHUTTLE"].has-findings').isVisible(), "the new split rule shows in the flow, marked with its finding");
+
+  await page.locator('[data-flow="split:SPLIT_TO_SHUTTLE"]').click();
+  await page.getByRole("button", { name: "Bearbeiten …", exact: true }).click();
+  await page.locator('[data-form-entry="SPLIT_TO_SHUTTLE"]').waitFor();
+  await page.locator('[data-field="condition"] input').fill("storage_technology_split");
+  await page.locator(".data-form > .sf-object > .sf-add").selectOption("split_by");
+  await page.locator('[data-field="split_by"] input').fill("storage_technology");
+  await page.locator(".data-form > .sf-object > .sf-add").selectOption("when");
+  const when = page.locator('[data-field="when"]');
+  if (!(await when.locator('[data-field="dimension_value"]').count())) await when.locator(".sf-add").selectOption("dimension_value");
+  await page.locator('[data-field="dimension_value"] input').fill("shuttle");
+  state = await applyAndValidate(page, "Übernehmen");
+  check(state === "ok", "completed, the split rule passes validate.py");
+  const diff = await page.locator("[data-changes]").textContent();
+  check(diff.includes('- id: "SPLIT_TO_SHUTTLE"') && diff.includes('dimension_value: "shuttle"'), "the split rule is written to split_rules.yaml");
+
+  await showOrderType();
+  await page.getByRole("button", { name: "Fehlmengen-Regel bearbeiten …" }).click();
+  await page.locator('[data-form-entry="Fehlmengen-Regel"]').waitFor();
+  await page.locator('[data-field="allow_substitution"] input').check();
+  state = await applyAndValidate(page, "Übernehmen");
+  check(state === "ok" && (await page.locator("[data-changes]").textContent()).includes("allow_substitution: true"), "the shortage policy is edited as one object");
+  await page.close();
+}
+
 let browser;
 try {
   await waitForServer();
@@ -378,6 +438,7 @@ try {
   await editTests(browser);
   await saveTests(browser);
   await dataTests(browser);
+  await workflowTests(browser);
 } catch (error) {
   failures.push(String(error));
   console.log(`FAIL ${error}`);
@@ -385,5 +446,5 @@ try {
   await browser?.close();
   server.kill();
 }
-console.log(failures.length ? `\n${failures.length} failure(s)` : "\nall e2e checks passed");
+console.log(failures.length ? `\n${failures.length} failure(s):\n${failures.map((f) => `  - ${f}`).join("\n")}` : "\nall e2e checks passed");
 process.exit(failures.length ? 1 : 0);

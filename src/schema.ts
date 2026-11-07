@@ -14,6 +14,8 @@ export interface Located {
 }
 
 const cache = new Map<string, Schema>();
+/** $refs that could not be resolved; their fields fall back to YAML text. */
+export const unresolved = new Set<string>();
 
 function load(catalog: Catalog, repo: string, file: string): Schema {
   const key = `${repo}/${file}`;
@@ -44,10 +46,26 @@ export function resolve(catalog: Catalog, at: Located, depth = 0): Located {
   if (!schema || depth > 20) return at;
   if (schema.$ref) {
     const [target, path = ""] = String(schema.$ref).split("#");
-    const targetFile = target ? file.replace(/[^/]*$/, target) : file;
-    const base = pointer(load(catalog, at.repo, targetFile), path);
+    let repo = at.repo;
+    let targetFile = file;
+    if (/^https?:\/\//.test(target)) {
+      // An absolute $id, e.g. https://order-orchestration-as-code.internal/schemas/x.json: the file
+      // of that name, in this repo or the repo that has it.
+      const name = `schemas/${target.split("/").pop()}`;
+      repo = catalog[repo]?.[name] !== undefined ? repo : Object.keys(catalog).find((r) => catalog[r][name] !== undefined) ?? repo;
+      targetFile = name;
+    } else if (target) {
+      targetFile = file.replace(/[^/]*$/, target);
+    }
     const { $ref: _, ...own } = schema;
-    const inner = resolve(catalog, { schema: base, repo: at.repo, file: targetFile }, depth + 1);
+    let base: Schema;
+    try {
+      base = pointer(load(catalog, repo, targetFile), path) ?? {};
+    } catch {
+      unresolved.add(`${at.repo}/${file}: ${schema.$ref}`);
+      return { schema: own, repo: at.repo, file }; // unresolvable: edited as YAML
+    }
+    const inner = resolve(catalog, { schema: base, repo, file: targetFile }, depth + 1);
     return { ...inner, schema: { ...inner.schema, ...own } };
   }
   if (Array.isArray(schema.allOf)) {
@@ -76,6 +94,8 @@ export type Kind = "enum" | "const" | "string" | "number" | "integer" | "boolean
 export function kindOf(schema: Schema): Kind {
   if (schema.const !== undefined) return "const";
   if (Array.isArray(schema.enum)) return "enum";
+  // oneOf/anyOf next to properties only constrain which fields go together: still a form.
+  if (schema.properties && (schema.type === "object" || schema.type === undefined)) return "object";
   if (schema.oneOf || schema.anyOf) return "yaml";
   const type = Array.isArray(schema.type) ? undefined : schema.type;
   if (type === "object") return schema.properties ? "object" : "yaml";
@@ -116,14 +136,16 @@ export function emptyValue(catalog: Catalog, at: Located): Value {
  * ("References an id in elements/uom_types.yaml"): suggestions, not a limit.
  */
 export function suggestions(catalog: Catalog, repo: string, schema: Schema): string[] {
-  const match = /elements\/([a-z_]+\.yaml)/.exec(String(schema.description ?? ""));
-  const text = match && catalog[repo]?.[`elements/${match[1]}`];
-  if (!text) return [];
   const ids: string[] = [];
-  for (const value of Object.values(readYaml(text))) {
-    if (Array.isArray(value)) for (const entry of value) if (entry && typeof entry.id === "string") ids.push(entry.id);
+  // "elements/x.yaml" is the repo's own catalog; "Topology-as-Code's elements/x.yaml" another repo's.
+  for (const match of String(schema.description ?? "").matchAll(/(?:([A-Za-z]+-as-Code)'s )?elements\/([a-z_]+\.yaml)/g)) {
+    const text = catalog[match[1] ?? repo]?.[`elements/${match[2]}`];
+    if (!text) continue;
+    for (const value of Object.values(readYaml(text))) {
+      if (Array.isArray(value)) for (const entry of value) if (entry && typeof entry.id === "string") ids.push(entry.id);
+    }
   }
-  return ids;
+  return [...new Set(ids)];
 }
 
 /** The first sentence of a description, for a hint under the field. */

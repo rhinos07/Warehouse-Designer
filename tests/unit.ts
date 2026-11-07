@@ -1,6 +1,8 @@
 // Unit tests for the YAML text edits, against the repos' own files
 // (`npm run bundle` first). Run with `npm run test:unit`.
 import fs from "node:fs";
+import { LISTS } from "../src/lists";
+import { child, kindOf, resolve, schemaAt, unresolved, type Located } from "../src/schema";
 import { appendItem, getItem, readYaml, removeItem, updateItem, type Item } from "../src/yamlEdit";
 
 const specs = JSON.parse(fs.readFileSync("public/specs.json", "utf8"));
@@ -129,6 +131,29 @@ const fewerSteps = updateItem(rules, "search_rules", "SEARCH_DEFAULT", { ...def,
 check(JSON.stringify((getItem(fewerSteps, "search_rules", "SEARCH_DEFAULT") as any).steps) === JSON.stringify(def.steps.slice(0, 2)), "a list entry inside an item can be removed");
 const scoped = updateItem(rules, "search_rules", "SEARCH_DEFAULT", { ...def, applies_to: { category_id: "beverages" } } as Item);
 check(JSON.stringify(getItem(scoped, "search_rules", "SEARCH_DEFAULT")) === JSON.stringify({ ...def, applies_to: { category_id: "beverages" } }), "a new nested field is written correctly");
+
+// ---- Every list's schema resolves into a form ----
+const catalog = Object.fromEntries(
+  Object.entries(specs.repos as Record<string, { files: Record<string, string> }>).map(([repo, { files }]) => [
+    repo,
+    Object.fromEntries(Object.entries(files).filter(([p]) => p.startsWith("schemas/") || p.startsWith("elements/"))),
+  ]),
+);
+let fields = 0;
+function walk(at: Located, depth: number) {
+  const { schema } = resolve(catalog, at);
+  fields++;
+  if (depth > 8) return;
+  for (const sub of Object.values((schema.properties ?? {}) as Record<string, object>)) walk(child(at, sub), depth + 1);
+  if (schema.items && !Array.isArray(schema.items)) walk(child(at, schema.items), depth + 1);
+}
+const topKinds = LISTS.map((def) => {
+  const at = schemaAt(catalog, def.repo, def.schema);
+  walk(at, 0);
+  return kindOf(at.schema);
+});
+check(topKinds.every((k) => k === "object"), `every list entry's schema is a form (${LISTS.length} lists)${topKinds.some((k) => k !== "object") ? `: not ${LISTS.filter((_, i) => topKinds[i] !== "object").map((d) => d.key).join(", ")}` : ""}`);
+check(unresolved.size === 0, `every $ref in their ${fields} fields resolves${unresolved.size ? `: ${[...unresolved].join("; ")}` : ""}`);
 
 console.log(failures.length ? `\n${failures.length} failure(s)` : "\nall unit checks passed");
 process.exit(failures.length ? 1 : 0);

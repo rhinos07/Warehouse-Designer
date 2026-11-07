@@ -4,11 +4,11 @@ import { entryLabel, findLists, listKey, type ListRef } from "./lists";
 import { emptyValue, schemaAt } from "./schema";
 import { ObjectFields } from "./SchemaForm";
 import type { Catalog, CheckResult, UserFile } from "./types";
-import { appendItem, readYaml, removeItem, updateItem, type ItemRef, type Value } from "./yamlEdit";
+import { appendItem, readYaml, removeItem, updateItem, updateTop, type ItemRef, type Value } from "./yamlEdit";
 
 type Obj = Record<string, Value>;
 
-/** An entry to open, e.g. from the topology diagram. */
+/** An entry to open, e.g. from a diagram; an empty id opens a new entry. */
 export interface Focus {
   repo: string;
   path: string;
@@ -45,23 +45,31 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
   useEffect(() => {
     if (!focus) return;
     const match = lists.find((l) => l.def.repo === focus.repo && l.path === focus.path && l.def.key === focus.key);
-    if (match) {
-      setSelected(listKey(match));
-      setEntry(focus.id);
+    if (!match) return;
+    setSelected(listKey(match));
+    if (match.def.single) {
+      setEntry(null);
+      return;
     }
+    if (focus.id) {
+      setEntry(focus.id);
+      return;
+    }
+    const at = schemaAt(catalog, match.def.repo, match.def.schema);
+    setEntry("new");
+    setDraftState({ key: `${listKey(match)}|new|`, value: { ...(at.schema.properties?.id ? { id: "" } : {}), ...(emptyValue(catalog, at) as Obj) } });
     // Only when a new focus arrives, not when the lists change after an edit.
   }, [focus]);
 
   const list: ListRef | undefined = lists.find((l) => listKey(l) === selected) ?? lists[0];
   const text = list ? files.find((f) => f.repo === list.def.repo && f.path === list.path)?.text ?? "" : "";
-  const entries = useMemo(() => {
-    const value = list ? readYaml(text)[list.def.key] : [];
-    return (Array.isArray(value) ? value : []) as Obj[];
-  }, [text, list]);
+  const single = Boolean(list?.def.single);
+  const data = useMemo(() => (list ? readYaml(text)[list.def.key] : undefined), [text, list]);
+  const entries = (Array.isArray(data) ? data : []) as Obj[];
   const at = useMemo(() => (list ? schemaAt(catalog, list.def.repo, list.def.schema) : null), [catalog, list]);
   const usesIds = entries.length ? entries.every((e) => typeof e?.id === "string") : Boolean(at?.schema.properties?.id);
   const index = entry === null || entry === "new" ? -1 : typeof entry === "number" ? entry : entries.findIndex((e) => e.id === entry);
-  const stored = index >= 0 ? entries[index] : undefined;
+  const stored = single ? ((data ?? {}) as Obj) : index >= 0 ? entries[index] : undefined;
   const ref: ItemRef | undefined = index < 0 ? undefined : usesIds ? String(entries[index].id) : index;
 
   const draftKey = `${list ? listKey(list) : ""}|${entry}|${entry === "new" ? "" : JSON.stringify(stored)}`;
@@ -85,7 +93,7 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
-  const label = stored ? entryLabel(stored, index) : "";
+  const label = single ? list.def.label : stored ? entryLabel(stored, index) : "";
   const change = (newText: string, summary: string): FileChange => ({ repo: list.def.repo, path: list.path, text: newText, summary });
 
   function create() {
@@ -130,8 +138,8 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
         <span className="hint"><code>{list.def.repo}/{list.path}</code> · Schema <code>{list.def.schema}</code></span>
       </div>
 
-      <div className="data-main">
-        <nav className="data-entries" aria-label="Einträge">
+      <div className={`data-main${single ? " single" : ""}`}>
+        {!single && <nav className="data-entries" aria-label="Einträge">
           {entries.map((e, i) => {
             const name = entryLabel(e, i);
             const flagged = findingsFor(name, findings).length > 0;
@@ -159,7 +167,7 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
           >
             + Neuer Eintrag
           </button>
-        </nav>
+        </nav>}
 
         <section className="data-form" data-form-entry={entry === "new" ? "new" : label || undefined}>
           {entry === "new" ? (
@@ -192,7 +200,14 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
                 ) : (
                   <>
                     <button
-                      onClick={() => attempt(() => change(updateItem(text, list.def.key, ref!, draft), `${list.def.label}: ${label} geändert`))}
+                      onClick={() =>
+                        attempt(() =>
+                          change(
+                            single ? updateTop(text, list.def.key, draft) : updateItem(text, list.def.key, ref!, draft),
+                            single ? `${list.def.label} geändert` : `${list.def.label}: ${label} geändert`,
+                          ),
+                        )
+                      }
                       disabled={busy || same(draft, stored)}
                     >
                       Übernehmen
@@ -200,7 +215,7 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
                     <button className="secondary" onClick={() => setDraftState(null)} disabled={same(draft, stored)}>
                       Zurücksetzen
                     </button>
-                    <button
+                    {!single && <button
                       className="secondary"
                       onClick={() => {
                         setEntry("new");
@@ -209,8 +224,8 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
                       disabled={busy}
                     >
                       Kopieren …
-                    </button>
-                    <button
+                    </button>}
+                    {!single && <button
                       className="danger"
                       onClick={() =>
                         window.confirm(`${label} löschen?`) &&
@@ -219,7 +234,7 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
                       disabled={busy}
                     >
                       Löschen
-                    </button>
+                    </button>}
                   </>
                 )}
               </div>

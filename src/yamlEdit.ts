@@ -339,3 +339,25 @@ export function getItem(text: string, key: string, ref: ItemRef): Item {
   const { items, index } = findItem(text, key, ref);
   return (items[index] as YAMLMap).toJSON() as Item;
 }
+
+/** The value of a top-level key that holds one object (e.g. shortage_policy), as plain data. */
+export function getTop(text: string, key: string): Record<string, Value> {
+  const value = topPair(text, key)?.value;
+  if (!isMap(value)) throw new EditError(`„${key}“ nicht gefunden.`);
+  return value.toJSON() as Record<string, Value>;
+}
+
+/** Changes a top-level object field by field, like updateItem. */
+export function updateTop(text: string, key: string, value: Record<string, Value>): string {
+  const pair = topPair(text, key);
+  const node = pair?.value;
+  if (!pair || !isMap(node)) throw new EditError(`„${key}“ nicht gefunden.`);
+  const patcher = new Patcher(text, padded(text));
+  try {
+    if (patcher.value(node, node.toJSON(), value, 0)) return patcher.apply();
+  } catch (error) {
+    if (!(error instanceof EditError)) throw error;
+  }
+  const colon = text.indexOf(":", pair.key.range![1]);
+  return text.slice(0, colon + 1) + blockText(value, 2, padded(text)) + text.slice(valueEnd(text, node));
+}
