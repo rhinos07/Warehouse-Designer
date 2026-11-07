@@ -9,6 +9,8 @@ export interface ListDef {
   key: string;
   schema: string; // schemas/<file>#<pointer> of one entry
   label: string;
+  /** The key holds one object rather than a list of entries (e.g. shortage_policy). */
+  single?: boolean;
 }
 
 export const LISTS: ListDef[] = [
@@ -31,6 +33,13 @@ export const LISTS: ListDef[] = [
   { repo: "Topology-as-Code", file: "lanes.yaml", key: "lanes", schema: "schemas/lanes.schema.json#/properties/lanes/items", label: "Fahrwege" },
   { repo: "Topology-as-Code", file: "lanes.yaml", key: "conveyor_segments", schema: "schemas/lanes.schema.json#/properties/conveyor_segments/items", label: "Förderabschnitte" },
   { repo: "Topology-as-Code", file: "movement_rules.yaml", key: "movement_rules", schema: "schemas/movement-rule.schema.json", label: "Bewegungsregeln" },
+  { repo: "OrderOrchestration-as-Code", file: "split_rules.yaml", key: "split_rules", schema: "schemas/split-rule.schema.json", label: "Split-Regeln" },
+  { repo: "OrderOrchestration-as-Code", file: "workflow_triggers.yaml", key: "workflow_triggers", schema: "schemas/workflow-trigger.schema.json", label: "Workflow-Trigger" },
+  { repo: "OrderOrchestration-as-Code", file: "completion_rules.yaml", key: "completion_rules", schema: "schemas/completion-rule.schema.json", label: "Abschlussregeln" },
+  { repo: "OrderOrchestration-as-Code", file: "status.yaml", key: "statuses", schema: "schemas/status.schema.json#/properties/statuses/items", label: "Status" },
+  { repo: "OrderOrchestration-as-Code", file: "status.yaml", key: "transitions", schema: "schemas/status.schema.json#/properties/transitions/items", label: "Statusübergänge" },
+  { repo: "OrderOrchestration-as-Code", file: "shortage_policy.yaml", key: "shortage_policy", schema: "schemas/shortage-policy.schema.json#/properties/shortage_policy", label: "Fehlmengen-Regel", single: true },
+  { repo: "OrderOrchestration-as-Code", file: "fields.yaml", key: "fields", schema: "schemas/fields.schema.json#/properties/fields", label: "Felder", single: true },
   { repo: "Topology-as-Code", file: "replenishment.yaml", key: "replenishment_strategies", schema: "schemas/replenishment-strategy.schema.json", label: "Nachschub" },
 ];
 
@@ -61,7 +70,7 @@ export function findLists(files: UserFile[]): ListRef[] {
       if (!(def.key in data)) continue;
       const scope = parts
         .slice(2, -1)
-        .filter((p) => !["facilities", "buildings", "categories", "structure", "strategies"].includes(p))
+        .filter((p) => !["facilities", "buildings", "categories", "structure", "strategies", "channels", "order_types"].includes(p))
         .join(" / ");
       found.push({ def, path: file.path, customer: parts[1], scope });
     }

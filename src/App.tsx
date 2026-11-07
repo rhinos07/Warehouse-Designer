@@ -5,6 +5,7 @@ import { DataView, type FileChange, type Focus } from "./DataView";
 import type { Change, Files } from "./editor";
 import { assign, canPickDirectory, detectLayout, pickDirectory, scanFileList, writeFiles, type Scan } from "./folder";
 import { TopologyView } from "./Topology";
+import { WorkflowView } from "./Workflow";
 import {
   REPOS,
   type Building,
@@ -19,7 +20,7 @@ import {
 } from "./types";
 
 type Phase = "loading" | "ready" | "running" | "failed";
-type Tab = "checks" | "topology" | "data";
+type Tab = "checks" | "topology" | "workflow" | "data";
 const TOPOLOGY: RepoName = "Topology-as-Code";
 
 /** One edit: a file's new text, keyed `<repo>/<path>`. */
@@ -220,7 +221,7 @@ export default function App() {
     ),
   ];
   useEffect(() => {
-    if (tab !== "data" || phase !== "ready" || !editedChecks.length || dataChecks?.version === version) return;
+    if ((tab !== "data" && tab !== "workflow") || phase !== "ready" || !editedChecks.length || dataChecks?.version === version) return;
     pendingVersion.current = version;
     setPhase("running");
     worker.current?.postMessage({ type: "validate", files: current, checks: editedChecks } satisfies ToWorker);
@@ -233,6 +234,9 @@ export default function App() {
   const busy = phase !== "ready";
   const checkFindings = (list: CheckResult[]) =>
     list.filter((r) => r.repo === TOPOLOGY).flatMap((r) => [...r.errors, ...r.warnings]);
+  const orderFindings = (dataChecks?.version === version ? dataChecks.checks : checkedVersion === version ? Object.values(results) : [])
+    .filter((r) => r.repo === "OrderOrchestration-as-Code")
+    .flatMap((r) => [...r.errors, ...r.warnings]);
   const topologyFindings = topology?.checks
     ? checkFindings(topology.checks)
     : checkedVersion === version
@@ -297,6 +301,7 @@ export default function App() {
       <nav className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === "checks"} onClick={() => setTab("checks")}>Prüfen</button>
         <button role="tab" aria-selected={tab === "topology"} onClick={() => setTab("topology")}>Topologie</button>
+        <button role="tab" aria-selected={tab === "workflow"} onClick={() => setTab("workflow")}>Aufträge</button>
         <button role="tab" aria-selected={tab === "data"} onClick={() => setTab("data")}>Daten</button>
       </nav>
 
@@ -339,6 +344,29 @@ export default function App() {
                 busy={busy}
               />
             </>
+          )}
+        </section>
+      )}
+
+      {tab === "workflow" && (
+        <section data-workflow={phase === "ready" && (!editedChecks.length || dataChecks?.version === version) ? "fresh" : "stale"}>
+          {unresolved && <p className="status">Bitte oben wählen, zu welchem Repo die Daten gehören.</p>}
+          {editedChecks.length > 0 && dataChecks?.version === version && <Validation checks={dataChecks.checks} />}
+          {editedChecks.length > 0 && dataChecks?.version !== version && <p className="status">Wird geprüft …</p>}
+          {!editedChecks.length && checkedVersion !== version && (
+            <p className="hint">Tipp: Nach „Prüfung starten“ werden Regeln mit Befunden hier rot markiert.</p>
+          )}
+          {!unresolved && specs && (
+            <WorkflowView
+              key={source}
+              files={current}
+              findings={orderFindings}
+              busy={busy}
+              onOpen={(target) => {
+                setFocus(target);
+                setTab("data");
+              }}
+            />
           )}
         </section>
       )}

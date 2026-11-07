@@ -192,3 +192,20 @@ pre.diff > div { padding: 0 8px; white-space: pre; }
 .sf-yaml { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; width: 100%; }
 .sf-error { color: var(--bad); font-size: 12px; }
 code.readonly { padding: 4px 0; }
+.data-main.single { grid-template-columns: 1fr; }
+
+/* Order workflows */
+.page:has(.workflow) { max-width: 1280px; }
+.workflow-diagrams h3 { margin: 0 0 6px; font-size: 15px; }
+.workflow-diagrams h3:not(:first-child) { margin-top: 14px; }
+.workflow .topo-details { max-height: 760px; }
+.workflow .topo-details h4 { margin-top: 18px; }
+.workflow .topo-details button { margin-top: 8px; }
+.flow-order { --kind: #2457c5; }
+.flow-split { --kind: #b0611a; }
+.flow-trigger { --kind: #2e8540; }
+.flow-completion { --kind: #7a6fb0; }
+.flow-action { --kind: #c2185b; }
+.flow-status { --kind: #8a94a3; border-radius: 22px; border-left-width: 1.5px; }
+.topo-node.terminal { border-width: 3px; border-style: double; }
+.workflow .react-flow__handle { opacity: 0; }

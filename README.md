@@ -11,7 +11,7 @@ It runs without a server and is published with GitHub Pages:
 
 Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
-## Status: phase 4, validation, topology view and editing, forms from the schemas
+## Status: phase 5, all planned phases built (simulation left open)
 
 - **Open a folder** with YAML definitions and check it with the repos' own
   validators: each repo's `tools/validate.py` per customer,
@@ -54,6 +54,18 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   After every change the edited customers are checked with each repo's
   `validate.py`; entries with findings are marked. In the topology editor,
   "Alle Attribute bearbeiten …" opens a node's full form.
+- **See and design order workflows** (tab "Aufträge"). For each
+  OrderOrchestration order type there are two diagrams:
+  - the flow: order → split rules → workflow triggers, and split rules →
+    completion rules → follow-up action (a new order, or reallocating the
+    rest);
+  - the status machine, with terminal statuses marked.
+
+  Clicking a rule shows its settings. "Bearbeiten …", "+ Split-Regel",
+  "+ Trigger" and "+ Abschlussregel" open the data tab's form, where the
+  rules, statuses, transitions, shortage policy and fields of an order type
+  are edited. Each change is validated with OrderOrchestration's
+  `validate.py`; rules with findings are marked in the diagram.
 - **Review and save:** unsaved edits are listed with a diff per file.
   - "In Ordner speichern" writes them back into the opened folder (Edge and
     Chrome). It refuses if a file changed on disk in the meantime.

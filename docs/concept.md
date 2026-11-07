@@ -108,3 +108,12 @@ Phase 4 status: the "Daten" tab edits list entries through forms generated from 
 | Files | Field-level splices: only changed values, added and removed fields or list entries differ. A removed field takes the comment lines directly above it along. `tests/unit.ts` changes every text field of all 194 list entries in the example data and checks the result is exactly the new values, on the same lines. |
 | Ids | Entered when an entry is created (item numbers and rule ids are business keys), checked against the schema's pattern and the list, and fixed afterwards. Lists without ids (packaging, fixed bins) are addressed by position. |
 | Feedback | After every change the edited customers are validated with each repo's `validate.py`; the result shows above the form and marks entries named in findings. Cross-repo references still need "Prüfung starten". |
+
+Phase 5 status: the "Aufträge" tab shows each OrderOrchestration order type as diagrams, and the data tab edits its rules.
+
+| Topic | Decision / implementation |
+|---|---|
+| Diagrams | **Flow:** order → split rules → workflow triggers; split rules → completion rules → follow-up action (`spawn_order` with target and "supersedes the order", or `reallocate_remainder`). **Status machine:** statuses and transitions, with terminal statuses marked. The order type's imports are found by file name, as `validate.py` does. |
+| Editing | Through the phase 4 forms: split rules, workflow triggers, completion rules, statuses and transitions as lists; `shortage_policy` and `fields` as single objects. "+ Split-Regel", "+ Trigger" and "+ Abschlussregel" open a new entry, and a diagram node opens its rule. Catalog suggestions also follow references into another repo's catalog (e.g. a trigger's `Topology-as-Code's elements/process_types.yaml`). |
+| Feedback | After every change OrderOrchestration's `validate.py` checks the customer; rules named in findings are marked in the diagram. |
+| Simulation | Not built, by decision of 2026-11-07. WMS-POC could run in the browser like the validators (Python with only pyyaml), but it is a private repository: the public page would publish its code, and the build would need a token for it. Open options: make WMS-POC public, bundle it with a token anyway, or write a small simulation of the page's own. |
