@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import type { PyodideInterface } from "pyodide";
 import runnerSource from "./runner.py?raw";
-import { DATA_DIRS, type CheckResult, type FromWorker, type RepoName, type ToWorker, type UserFile } from "./types";
+import { DATA_DIRS, type Catalog, type CheckResult, type FromWorker, type RepoName, type ToWorker, type UserFile } from "./types";
 
 interface Specs {
   generatedAt: string;
@@ -28,12 +28,15 @@ async function init(base: string) {
     Object.entries(specs.repos).map(([name, repo]) => [name, { commit: repo.commit, files: Object.keys(repo.files).length }]),
   );
   const examples: UserFile[] = [];
+  const catalog: Catalog = {};
   for (const [repo, { files }] of Object.entries(specs.repos)) {
+    catalog[repo] = {};
     for (const [path, text] of Object.entries(files)) {
       if (DATA_DIRS.some((d) => path.startsWith(`${d}/`))) examples.push({ repo: repo as RepoName, path, text });
+      else if (path.startsWith("schemas/") || path.startsWith("elements/")) catalog[repo][path] = text;
     }
   }
-  post({ type: "ready", specs: info, generatedAt: specs.generatedAt, examples });
+  post({ type: "ready", specs: info, generatedAt: specs.generatedAt, examples, catalog });
 }
 
 function write(path: string, text: string) {
@@ -78,20 +81,25 @@ function run(repos: RepoName[], files: UserFile[] | null) {
   post({ type: "done" });
 }
 
+/** Runs the checks with these ids (e.g. MasterData-as-Code/example_customer) on the prepared data. */
+function runChecks(ids: string[]): CheckResult[] {
+  const repos = [...new Set(ids.map((id) => id.split("/")[0]))];
+  py.globals.set("_repos", py.toPy(repos));
+  const results: CheckResult[] = [];
+  for (const check of toJs<Record<string, unknown>[]>("runner.plan(_repos)")) {
+    if (!ids.includes(String(check.id))) continue;
+    py.globals.set("_check", py.toPy(check));
+    results.push(toJs("runner.run_check(_check)"));
+  }
+  return results;
+}
+
 /** Compile every building; `validate` also runs Topology's validate.py for these customer folders. */
 function compile(files: UserFile[] | null, validate: string[] = []) {
   prepare(files);
   const buildings = JSON.parse(py.runPython("runner.compile_buildings()"));
-  const checks: CheckResult[] = [];
-  if (validate.length) {
-    py.globals.set("_repos", py.toPy(["Topology-as-Code"]));
-    for (const check of toJs<Record<string, unknown>[]>("runner.plan(_repos)")) {
-      if (!validate.includes(String(check.title))) continue;
-      py.globals.set("_check", py.toPy(check));
-      checks.push(toJs("runner.run_check(_check)"));
-    }
-  }
-  post({ type: "topology", buildings, checks: validate.length ? checks : undefined });
+  const checks = validate.length ? runChecks(validate.map((c) => `Topology-as-Code/${c}`)) : undefined;
+  post({ type: "topology", buildings, checks });
 }
 
 self.onmessage = async (event: MessageEvent<ToWorker>) => {
@@ -99,6 +107,10 @@ self.onmessage = async (event: MessageEvent<ToWorker>) => {
   try {
     if (message.type === "init") await init(message.base);
     else if (message.type === "compile") compile(message.files, message.validate);
+    else if (message.type === "validate") {
+      prepare(message.files);
+      post({ type: "validated", checks: runChecks(message.checks) });
+    }
     else run(message.repos, message.files);
   } catch (error) {
     post({ type: "error", message: error instanceof Error ? error.message : String(error) });

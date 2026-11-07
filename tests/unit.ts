@@ -1,7 +1,7 @@
 // Unit tests for the YAML text edits, against the repos' own files
 // (`npm run bundle` first). Run with `npm run test:unit`.
 import fs from "node:fs";
-import { appendItem, readYaml, removeItem } from "../src/yamlEdit";
+import { appendItem, getItem, readYaml, removeItem, updateItem, type Item } from "../src/yamlEdit";
 
 const specs = JSON.parse(fs.readFileSync("public/specs.json", "utf8"));
 const topology: Record<string, string> = specs.repos["Topology-as-Code"].files;
@@ -70,6 +70,65 @@ const withoutMiddle = removeItem(wcs, "reporting_points", "RP_C02");
 check(/capacity: 1\n\n  - id: "RP_C03"/.test(withoutMiddle), "removing a middle item keeps one blank line between its neighbors");
 const withoutFirst = removeItem(storage, "doors", "DOOR_01");
 check(withoutFirst.includes("doors:\n  - id: \"DOOR_02\""), "removing the first item closes the gap below the list key");
+
+// ---- updateItem: field by field ----
+const repoFiles = (repo: string): Record<string, string> => specs.repos[repo].files;
+const lists: [string, string, string][] = []; // repo, path, key
+for (const repo of ["Topology-as-Code", "Allocation-as-Code", "MasterData-as-Code", "OrderOrchestration-as-Code"]) {
+  for (const [path, text] of Object.entries(repoFiles(repo))) {
+    if (!path.startsWith("customers/") || !path.endsWith(".yaml")) continue;
+    for (const [key, value] of Object.entries(readYaml(text))) {
+      if (Array.isArray(value) && value.length && value.every((v) => v && typeof v === "object" && !Array.isArray(v))) lists.push([repo, path, key]);
+    }
+  }
+}
+/** Every string leaf changed, so each scalar is spliced once. */
+const touch = (v: unknown): unknown =>
+  Array.isArray(v) ? v.map(touch) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === "id" ? x : touch(x)])) : typeof v === "string" ? `${v}X` : v;
+let items = 0, unchanged = 0, correct = 0, sameLines = 0;
+for (const [repo, path, key] of lists) {
+  const text = repoFiles(repo)[path];
+  for (const [index, entry] of (readYaml(text)[key] as Item[]).entries()) {
+    const id = typeof entry.id === "string" ? entry.id : index; // lists without ids: by position
+    items++;
+    const item = getItem(text, key, id);
+    if (updateItem(text, key, id, item) === text) unchanged++;
+    const changed = touch(item) as Item;
+    const out = updateItem(text, key, id, changed);
+    if (JSON.stringify(getItem(out, key, id)) === JSON.stringify(changed)) correct++;
+    else console.log(`  ${repo}/${path} ${key}/${id}`);
+    if (out.split("\n").length === text.split("\n").length) sameLines++;
+  }
+}
+check(unchanged === items, `an unchanged item leaves the file byte for byte (${unchanged}/${items})`);
+check(correct === items, `changing every text field of an item gives exactly the new values (${correct}/${items})`);
+check(sameLines === items, `changing values in place keeps every line where it was (${sameLines}/${items})`);
+
+const md = repoFiles("MasterData-as-Code");
+const itemsPath = Object.keys(md).find((p) => p.endsWith("beverages/structure/items.yaml"))!;
+const itemsText = md[itemsPath];
+const item3 = getItem(itemsText, "items", "ITEM_003");
+const longer = updateItem(itemsText, "items", "ITEM_003", { ...item3, tracking: { expiry: { ...(item3.tracking as any).expiry, total_shelf_life_days: 300 } } });
+check(changedLines(itemsText, longer) === 2 && longer.includes("Shorter shelf life than the category default"), "a nested number changes on its line, the comments around it stay");
+const { storage_condition, ...noCondition } = item3;
+const cold = updateItem(itemsText, "items", "ITEM_003", noCondition as Item);
+check(!cold.includes("storage_condition") && !cold.includes("Needs refrigeration") && changedLines(itemsText, cold) === 2, "a removed field takes its comment along, nothing else");
+const item1 = getItem(itemsText, "items", "ITEM_001");
+const ambient = updateItem(itemsText, "items", "ITEM_001", { ...item1, storage_condition: "ambient", dimensions: { ...(item1.dimensions as any), width: { value: 95, unit: "mm" } } });
+check(ambient.includes(`    weight: { value: 1.55, unit: "kg" }\n    storage_condition: "ambient"\n`), "a new field is added at the end of the item, in the file's quoting");
+check(ambient.includes(`width: { value: 95, unit: "mm" }`), "a value inside an inline map changes in place, padding kept");
+
+const alloc = repoFiles("Allocation-as-Code");
+const rulesPath = Object.keys(alloc).find((p) => p.endsWith("hall_3/strategies/search_rules.yaml"))!;
+const rules = alloc[rulesPath];
+const def = getItem(rules, "search_rules", "SEARCH_DEFAULT") as Item & { steps: any[] };
+const moreSteps = updateItem(rules, "search_rules", "SEARCH_DEFAULT", { ...def, steps: [...def.steps, { zone: { type: "storage_type", id: "BLK" }, selection_strategy: "FIFO" }] });
+check(moreSteps.includes(`        selection_strategy: "FIFO"\n      - zone: { type: "storage_type", id: "BLK" }\n        selection_strategy: "FIFO"\n`), "a new list entry inside an item follows the list's indentation and style");
+check(changedLines(rules, moreSteps) <= 2 && moreSteps.includes("Found by WMS-POC actually running this rule"), "adding a step touches only the new lines");
+const fewerSteps = updateItem(rules, "search_rules", "SEARCH_DEFAULT", { ...def, steps: def.steps.slice(0, 2) });
+check(JSON.stringify((getItem(fewerSteps, "search_rules", "SEARCH_DEFAULT") as any).steps) === JSON.stringify(def.steps.slice(0, 2)), "a list entry inside an item can be removed");
+const scoped = updateItem(rules, "search_rules", "SEARCH_DEFAULT", { ...def, applies_to: { category_id: "beverages" } } as Item);
+check(JSON.stringify(getItem(scoped, "search_rules", "SEARCH_DEFAULT")) === JSON.stringify({ ...def, applies_to: { category_id: "beverages" } }), "a new nested field is written correctly");
 
 console.log(failures.length ? `\n${failures.length} failure(s)` : "\nall unit checks passed");
 process.exit(failures.length ? 1 : 0);

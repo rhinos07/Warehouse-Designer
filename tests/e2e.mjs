@@ -6,6 +6,8 @@
 // 4. A topology finding marks the node it names in the diagram.
 // 5. Editing the example data: add elements and a connection, each validated
 //    by Topology's validate.py at once; delete; undo.
+// 7. The data tab: forms from the repos' JSON Schemas for master data, rules
+//    and topology attributes, validated by each repo's validate.py.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -107,6 +109,8 @@ async function editTests(browser) {
     await page.getByRole("button", { name: "Hinzufügen" }).click();
   });
   check(state === "ok", "a new connection passes validate.py");
+  // React Flow draws edges once their nodes are measured: wait for this one.
+  await page.locator(".react-flow__edge[data-id^='can:MAN_DOOR_04_TO_STAGING']").waitFor({ timeout: 10_000 }).catch(() => {});
   check((await page.locator(".react-flow__edge").count()) > edges, "the connection appears in the diagram");
 
   await page.locator('[data-node="DOOR_04"]').click();
@@ -225,6 +229,73 @@ async function saveTests(browser) {
   await page.close();
 }
 
+async function waitForData(page) {
+  await page.locator('[data-data="fresh"]').waitFor({ timeout: TIMEOUT });
+}
+
+/** Clicks a button that changes the data, then waits for the page to revalidate. */
+async function applyAndValidate(page, name) {
+  const before = await page.locator("[data-changes] .change-log li").count();
+  await page.getByRole("button", { name, exact: true }).click();
+  await page.waitForFunction((n) => document.querySelectorAll("[data-changes] .change-log li").length === n + 1, before, { timeout: TIMEOUT });
+  await waitForData(page);
+  return page.locator("[data-validation]").getAttribute("data-validation");
+}
+
+async function dataTests(browser) {
+  const page = await browser.newPage();
+  await page.addInitScript(() => delete window.showDirectoryPicker);
+  page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
+  await page.goto(URL);
+  const open = page.getByRole("button", { name: "Ordner öffnen …" });
+  await page.waitForFunction((b) => !b.disabled, await open.elementHandle(), { timeout: TIMEOUT });
+  await page.getByRole("tab", { name: "Daten" }).click();
+  const list = page.locator(".data-toolbar select");
+  const options = await list.locator("option").allTextContents();
+  check(["Artikel", "Suchregeln (Auslagerung)", "Lagertypen", "Tore"].every((l) => options.some((o) => o.startsWith(`${l} – `))), "master data, rules and topology lists are offered");
+
+  await list.selectOption({ label: "Artikel – example_customer / beverages" });
+  await page.locator('[data-entry="ITEM_003"]').click();
+  await page.locator('[data-field="total_shelf_life_days"] input').fill("300");
+  let state = await applyAndValidate(page, "Übernehmen");
+  check(state === "ok", "a changed item passes MasterData's validate.py");
+  const diff = await page.locator("[data-changes]").textContent();
+  check(diff.includes("Artikel: ITEM_003 geändert") && diff.includes("+1 −1"), "the change is one changed line");
+
+  await page.locator('[data-field="storage_condition"] input').fill("frozen_xyz");
+  state = await applyAndValidate(page, "Übernehmen");
+  check(state === "failed" && (await page.locator("[data-validation]").textContent()).includes("frozen_xyz"), "an unknown storage condition fails validate.py");
+  check(await page.locator('[data-entry="ITEM_003"].flagged').isVisible(), "the item with the finding is marked");
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await waitForData(page);
+
+  await list.selectOption({ label: "Suchregeln (Auslagerung) – example_customer / facility_pa11 / hall_3" });
+  await page.getByRole("button", { name: "+ Neuer Eintrag" }).click();
+  await page.locator(".data-form > .sf-object > [data-field=\"id\"] input").fill("SEARCH_TEST");
+  await page.locator('[data-field="zone"] [data-field="id"] input').fill("HBR");
+  await page.locator('[data-field="selection_strategy"] input').fill("FIFO");
+  state = await applyAndValidate(page, "Anlegen");
+  check(state === "failed" && (await page.locator("[data-validation]").textContent()).includes("both omit applies_to"), "a second default search rule fails Allocation's validate.py");
+  check(await page.locator('[data-entry="SEARCH_TEST"].current').isVisible(), "the new rule is selected");
+  await page.locator(".data-form > .sf-object > .sf-add").selectOption("applies_to");
+  await page.locator('[data-field="applies_to"]').getByLabel("Feld hinzufügen").selectOption("item_id");
+  await page.locator('[data-field="item_id"] input').fill("ITEM_001");
+  state = await applyAndValidate(page, "Übernehmen");
+  check(state === "ok", "scoped to an item, the new rule passes");
+  const rules = await page.locator("[data-changes]").textContent();
+  check(rules.includes('- id: "SEARCH_TEST"') && rules.includes('item_id: "ITEM_001"') && rules.includes('- zone: { type: "storage_type", id: "HBR" }'), "the new rule is written in the file's style");
+
+  await page.getByRole("tab", { name: "Topologie" }).click();
+  await openHall(page, "/ PA11 /");
+  await page.locator('[data-node="DOOR_01"]').waitFor({ state: "visible", timeout: TIMEOUT });
+  await page.getByLabel("Bearbeiten").check();
+  await page.locator('[data-node="DOOR_01"]').click();
+  await page.getByRole("button", { name: "Alle Attribute bearbeiten …" }).click();
+  await page.locator('[data-form-entry="DOOR_01"]').waitFor();
+  check((await page.locator('[data-field="staging_section"] input').inputValue()) === "STAGING.SEC_STAGING_IN", "a node opens its full form in the data tab");
+  await page.close();
+}
+
 let browser;
 try {
   await waitForServer();
@@ -306,6 +377,7 @@ try {
 
   await editTests(browser);
   await saveTests(browser);
+  await dataTests(browser);
 } catch (error) {
   failures.push(String(error));
   console.log(`FAIL ${error}`);

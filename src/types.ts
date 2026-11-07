@@ -10,6 +10,9 @@ export type RepoName = (typeof REPOS)[number];
 /** Folders a user's data may supply; tools, schemas and catalogs always come from the page. */
 export const DATA_DIRS = ["customers", "sites", "examples"];
 
+/** The page's own schemas/ and elements/ files, by repo and path: what forms and suggestions are built from. */
+export type Catalog = Record<string, Record<string, string>>;
+
 export interface UserFile {
   repo: RepoName;
   path: string; // inside the repo, e.g. customers/x/company.yaml
@@ -53,11 +56,13 @@ export interface Building {
 export type ToWorker =
   | { type: "init"; base: string }
   | { type: "run"; repos: RepoName[]; files: UserFile[] | null }
-  | { type: "compile"; files: UserFile[] | null; validate?: string[] };
+  | { type: "compile"; files: UserFile[] | null; validate?: string[] }
+  | { type: "validate"; files: UserFile[]; checks: string[] };
 
 export type FromWorker =
   | { type: "status"; text: string }
-  | { type: "ready"; specs: SpecsInfo; generatedAt: string; examples: UserFile[] }
+  | { type: "ready"; specs: SpecsInfo; generatedAt: string; examples: UserFile[]; catalog: Catalog }
+  | { type: "validated"; checks: CheckResult[] }
   | { type: "plan"; checks: CheckInfo[] }
   | { type: "result"; result: CheckResult }
   | { type: "done" }
