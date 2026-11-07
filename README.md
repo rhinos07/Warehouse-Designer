@@ -11,7 +11,7 @@ It runs without a server and is published with GitHub Pages:
 
 Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
-## Status: phase 3, validation, topology view and topology editing
+## Status: phase 4, validation, topology view and editing, forms from the schemas
 
 - **Open a folder** with YAML definitions and check it with the repos' own
   validators: each repo's `tools/validate.py` per customer,
@@ -36,6 +36,24 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   After every edit the page recompiles the building and runs Topology's
   `validate.py` for that customer, so a bad edit shows at once and can be
   undone.
+- **Edit master data, rules and topology attributes as forms** (tab "Daten").
+  The forms are generated from the repos' own JSON Schemas:
+  - MasterData: items, packaging, sourcing and lifecycle;
+  - Allocation: search, putaway, fixed-bin and area rules;
+  - Topology: every element list, e.g. storage types, doors and movement
+    rules.
+
+  How the forms behave:
+  - Required fields are always shown; optional ones can be added.
+  - Fields that reference a catalog (e.g. `elements/uom_types.yaml`) suggest
+    its ids.
+  - What a form cannot express (alternative shapes, free maps) is edited as
+    YAML.
+  - Ids are set when an entry is created and stay fixed afterwards.
+
+  After every change the edited customers are checked with each repo's
+  `validate.py`; entries with findings are marked. In the topology editor,
+  "Alle Attribute bearbeiten …" opens a node's full form.
 - **Review and save:** unsaved edits are listed with a diff per file.
   - "In Ordner speichern" writes them back into the opened folder (Edge and
     Chrome). It refuses if a file changed on disk in the meantime.
@@ -54,7 +72,7 @@ Saving into the folder needs Edge or Chrome; the browser asks for write
 permission on the first save.
 
 Edits change the YAML files as text, not by rewriting them (`src/yamlEdit.ts`):
-only the added or removed list item changes. Comments, quoting, alignment and
+only the added or removed list item, or the changed fields of an entry, change. Comments, quoting, alignment and
 blank lines stay as they are, so the saved file diffs like a hand edit and can
 go through the repo's usual pull request review.
 

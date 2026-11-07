@@ -51,12 +51,14 @@ function TopoNodeView({ data, selected }: NodeProps<Node<TopoNodeData>>) {
 }
 const nodeTypes = { topo: TopoNodeView };
 
-export function TopologyView({ buildings, findings, files, onChange, busy = false }: {
+export function TopologyView({ buildings, findings, files, onChange, onOpen, busy = false }: {
   buildings: Building[];
   findings: string[];
   /** Topology-as-Code files by repo path; with onChange, the diagram can be edited. */
   files?: Files;
   onChange?: (change: Change) => void;
+  /** Opens an element's entry in the data tab's form. */
+  onOpen?: (target: { path: string; key: string; id: string }) => void;
   busy?: boolean;
 }) {
   const [path, setPath] = useState(() => (buildings.find((b) => b.ok) ?? buildings[0])?.path);
@@ -157,6 +159,8 @@ export function TopologyView({ buildings, findings, files, onChange, busy = fals
     aside = <EdgeDetails edge={edge} onRemove={() => attempt(() => removeLink(building, files!, edge.sourceType ?? "", edge.entityId))} />;
   } else if (selected && graph) {
     const removable = edit && ["door", "work_center", "reporting_point"].includes(selected.kind);
+    const home = selected.kind === "storage_type" ? (["storage.yaml", "storage_types"] as const) : HOME[selected.kind];
+    const homePath = home && building.sources?.[home[0]];
     const used = removable ? usages(building, files!, selected.id) : [];
     aside = (
       <Details node={selected} building={building} graph={graph} findings={findingsFor(selected.id, findings)}>
@@ -164,6 +168,11 @@ export function TopologyView({ buildings, findings, files, onChange, busy = fals
           <div className="edit-actions">
             {ENDPOINT_KINDS.includes(selected.kind) && (
               <button onClick={() => setForm({ type: "connection", from: selected.id })} disabled={busy}>Verbindung hinzufügen …</button>
+            )}
+            {onOpen && home && homePath && (
+              <button className="secondary" onClick={() => onOpen({ path: homePath, key: home[1], id: selected.id })} disabled={busy}>
+                Alle Attribute bearbeiten …
+              </button>
             )}
             {removable && (
               <button

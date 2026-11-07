@@ -98,3 +98,13 @@ Phase 3 status: the topology can be edited in the diagram (checkbox "Bearbeiten"
 | Cross-repo references | A door or work center used by Allocation or OrderOrchestration is caught by "Prüfung starten" (Warehouse-as-Code's site check), not by the per-edit validation, which covers Topology only. |
 
 Not editable yet: attributes of existing elements, storage types (sections, rack templates, generators), lanes and the main conveyor (only deletable), movement rules, controllers. Next candidates: an attribute form generated from the JSON Schemas (phase 4) and movement rules.
+
+Phase 4 status: the "Daten" tab edits list entries through forms generated from the repos' JSON Schemas.
+
+| Topic | Decision / implementation |
+|---|---|
+| Scope | One generic editor instead of one form per file type. Covered: MasterData (items, packaging, sourcing, lifecycle), Allocation (search, putaway, fixed-bin and area rules) and every Topology element list. The file/key/schema pairs are the ones each repo's `tools/validate.py` uses (`src/lists.ts`). OrderOrchestration stays for phase 5. |
+| Forms | Built from the schema at run time (`src/schema.ts`, `src/SchemaForm.tsx`): `$ref` across schema files, `allOf` merged, enums as selects, nested objects and lists with add, remove and reorder. Optional fields appear once added. A description naming a catalog (`References an id in elements/x.yaml`) turns into suggestions from that catalog. `oneOf`/`anyOf` and free maps are edited as YAML text. |
+| Files | Field-level splices: only changed values, added and removed fields or list entries differ. A removed field takes the comment lines directly above it along. `tests/unit.ts` changes every text field of all 194 list entries in the example data and checks the result is exactly the new values, on the same lines. |
+| Ids | Entered when an entry is created (item numbers and rule ids are business keys), checked against the schema's pattern and the list, and fixed afterwards. Lists without ids (packaging, fixed bins) are addressed by position. |
+| Feedback | After every change the edited customers are validated with each repo's `validate.py`; the result shows above the form and marks entries named in findings. Cross-repo references still need "Prüfung starten". |

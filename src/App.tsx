@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChangesView, type ChangedFile } from "./Changes";
 import { ChecksView } from "./Checks";
+import { DataView, type FileChange, type Focus } from "./DataView";
 import type { Change, Files } from "./editor";
 import { assign, canPickDirectory, detectLayout, pickDirectory, scanFileList, writeFiles, type Scan } from "./folder";
 import { TopologyView } from "./Topology";
 import {
   REPOS,
   type Building,
+  type Catalog,
   type CheckInfo,
   type CheckResult,
   type FromWorker,
@@ -17,7 +19,7 @@ import {
 } from "./types";
 
 type Phase = "loading" | "ready" | "running" | "failed";
-type Tab = "checks" | "topology";
+type Tab = "checks" | "topology" | "data";
 const TOPOLOGY: RepoName = "Topology-as-Code";
 
 /** One edit: a file's new text, keyed `<repo>/<path>`. */
@@ -36,6 +38,9 @@ export default function App() {
   const [status, setStatus] = useState("Wird gestartet …");
   const [specs, setSpecs] = useState<{ repos: SpecsInfo; generatedAt: string } | null>(null);
   const [examples, setExamples] = useState<UserFile[]>([]);
+  const [catalog, setCatalog] = useState<Catalog>({});
+  const [dataChecks, setDataChecks] = useState<{ version: number; checks: CheckResult[] } | null>(null);
+  const [focus, setFocus] = useState<Focus | null>(null);
   const [tab, setTab] = useState<Tab>("checks");
   // Data source: the repos' example data (scan === null) or an opened folder.
   const [scan, setScan] = useState<Scan | null>(null);
@@ -60,11 +65,15 @@ export default function App() {
       else if (m.type === "ready") {
         setSpecs({ repos: m.specs, generatedAt: m.generatedAt });
         setExamples(m.examples);
+        setCatalog(m.catalog);
         setPhase("ready");
       } else if (m.type === "plan") setChecks(m.checks);
       else if (m.type === "result") setResults((r) => ({ ...r, [m.result.id]: m.result }));
       else if (m.type === "done") setPhase("ready");
-      else if (m.type === "topology") {
+      else if (m.type === "validated") {
+        setDataChecks({ version: pendingVersion.current, checks: m.checks });
+        setPhase("ready");
+      } else if (m.type === "topology") {
         setTopology({ version: pendingVersion.current, buildings: m.buildings, checks: m.checks });
         setPhase("ready");
       } else if (m.type === "error") {
@@ -197,6 +206,26 @@ export default function App() {
     }
   }
 
+  function applyFileChange(change: FileChange) {
+    changeData([...edits, { key: `${change.repo}/${change.path}`, text: change.text, summary: change.summary }]);
+  }
+
+  // The data tab validates the edited customers after every edit, with each repo's validate.py.
+  const editedChecks = [
+    ...new Set(
+      edits
+        .map((e) => e.key.split("/"))
+        .filter((parts) => parts[1] === "customers" && parts[0] !== "Warehouse-as-Code")
+        .map((parts) => `${parts[0]}/${parts[2]}`),
+    ),
+  ];
+  useEffect(() => {
+    if (tab !== "data" || phase !== "ready" || !editedChecks.length || dataChecks?.version === version) return;
+    pendingVersion.current = version;
+    setPhase("running");
+    worker.current?.postMessage({ type: "validate", files: current, checks: editedChecks } satisfies ToWorker);
+  });
+
   function applyChange(change: Change) {
     changeData([...edits, { key: `${TOPOLOGY}/${change.path}`, text: change.text, summary: change.summary }]);
   }
@@ -268,6 +297,7 @@ export default function App() {
       <nav className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === "checks"} onClick={() => setTab("checks")}>Prüfen</button>
         <button role="tab" aria-selected={tab === "topology"} onClick={() => setTab("topology")}>Topologie</button>
+        <button role="tab" aria-selected={tab === "data"} onClick={() => setTab("data")}>Daten</button>
       </nav>
 
       {tab === "checks" && (
@@ -302,9 +332,32 @@ export default function App() {
                 findings={topologyFindings}
                 files={topologyFiles}
                 onChange={applyChange}
+                onOpen={(target) => {
+                  setFocus({ repo: TOPOLOGY, ...target });
+                  setTab("data");
+                }}
                 busy={busy}
               />
             </>
+          )}
+        </section>
+      )}
+
+      {tab === "data" && (
+        <section data-data={phase === "ready" && (!editedChecks.length || dataChecks?.version === version) ? "fresh" : "stale"}>
+          {unresolved && <p className="status">Bitte oben wählen, zu welchem Repo die Daten gehören.</p>}
+          {editedChecks.length > 0 && dataChecks?.version === version && <Validation checks={dataChecks.checks} />}
+          {editedChecks.length > 0 && dataChecks?.version !== version && <p className="status">Wird geprüft …</p>}
+          {!unresolved && specs && (
+            <DataView
+              key={source}
+              files={current}
+              catalog={catalog}
+              checks={dataChecks?.version === version ? dataChecks.checks : undefined}
+              busy={busy}
+              onChange={applyFileChange}
+              focus={focus}
+            />
           )}
         </section>
       )}
@@ -336,7 +389,7 @@ function Validation({ checks }: { checks: CheckResult[] }) {
     <div className={`validation ${errors.length ? "failed" : "ok"}`} data-validation={errors.length ? "failed" : "ok"}>
       {errors.length
         ? `Nach der Änderung meldet validate.py ${errors.length} Fehler:`
-        : `Nach der Änderung: validate.py ohne Fehler (${checks.map((c) => c.title).join(", ")}).`}
+        : `Nach der Änderung: validate.py ohne Fehler (${checks.map((c) => c.id).join(", ")}).`}
       {errors.length > 0 && <ul className="findings">{errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
       {warnings.length > 0 && <ul className="findings warnings">{warnings.map((w, i) => <li key={i}>Hinweis: {w}</li>)}</ul>}
     </div>
