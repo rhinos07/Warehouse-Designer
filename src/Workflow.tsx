@@ -2,6 +2,7 @@
 // what each sub-order triggers, what happens when they complete, and the
 // status machine. Editing goes through the data tab's schema forms.
 import dagre from "@dagrejs/dagre";
+import { FindingList } from "./FindingList";
 import {
   Background,
   Controls,
@@ -323,7 +324,7 @@ export function WorkflowView({ files, findings, onOpen, busy }: {
               <h3>{item.title}</h3>
               <p className="hint">{KIND_LABEL[item.kind]}</p>
               {item.entity && findingsFor(String(item.entity.id ?? ""), findings).length > 0 && (
-                <ul className="findings">{findingsFor(String(item.entity.id), findings).map((f, i) => <li key={i}>{f}</li>)}</ul>
+                <FindingList items={findingsFor(String(item.entity.id), findings)} />
               )}
               {item.entity && <Attributes entity={item.entity} />}
               {item.home && item.entity && (

@@ -268,6 +268,14 @@ async function dataTests(browser) {
   await page.locator('[data-field="storage_condition"] input').fill("frozen_xyz");
   state = await applyAndValidate(page, "Übernehmen");
   check(state === "failed" && (await page.locator("[data-validation]").textContent()).includes("frozen_xyz"), "an unknown storage condition fails validate.py");
+  const finding = page.locator("[data-validation] .finding").first();
+  check(
+    (await finding.locator(".f-text").textContent()) === "Lagerbedingung „frozen_xyz“ ist im Katalog „storage_conditions“ nicht vorhanden." &&
+      (await finding.locator(".f-subject").textContent()) === "Artikel ITEM_003" &&
+      (await finding.locator(".f-location").textContent()).includes("Kategorie beverages"),
+    "the finding reads in project language: where, what and why",
+  );
+  check((await finding.locator(".f-original code").textContent()).includes("not found in elements/storage_conditions.yaml"), "the tool's original line stays available");
   check(await page.locator('[data-entry="ITEM_003"].flagged').isVisible(), "the item with the finding is marked");
   await page.getByRole("button", { name: "Rückgängig" }).click();
   await waitForData(page);
@@ -278,7 +286,7 @@ async function dataTests(browser) {
   await page.locator('[data-field="zone"] [data-field="id"] input').fill("HBR");
   await page.locator('[data-field="selection_strategy"] input').fill("FIFO");
   state = await applyAndValidate(page, "Anlegen");
-  check(state === "failed" && (await page.locator("[data-validation]").textContent()).includes("both omit applies_to"), "a second default search rule fails Allocation's validate.py");
+  check(state === "failed" && (await page.locator("[data-validation]").textContent()).includes("Nur eine Regel je Halle darf die Standardregel sein"), "a second default search rule fails Allocation's validate.py, explained in German");
   check(await page.locator('[data-entry="SEARCH_TEST"].current').isVisible(), "the new rule is selected");
   await page.locator(".data-form > .sf-object > .sf-add").selectOption("applies_to");
   await page.locator('[data-field="applies_to"]').getByLabel("Feld hinzufügen").selectOption("item_id");
@@ -403,6 +411,7 @@ try {
     'condition: "no_such_reason"',
   );
   await page.locator('input[type="file"]').setInputFiles(folder);
+  await page.locator("[data-source]", { hasText: "OrderOrchestration-as-Code" }).waitFor();
   await page.getByText("Der Ordner enthält keine Topology-as-Code-Daten.").waitFor({ timeout: TIMEOUT });
   check(true, "the topology tab says the folder has no topology data");
   await page.getByRole("tab", { name: "Prüfen" }).click();
@@ -425,6 +434,8 @@ try {
     'entity_type: "door"\n      entity_id: "HBR"',
   );
   await page.locator('input[type="file"]').setInputFiles(topology);
+  // Reading the folder is asynchronous: wait until the page shows it as the data source.
+  await page.locator("[data-source]", { hasText: "Topology-as-Code" }).waitFor();
   await page.getByRole("button", { name: "Prüfung starten" }).click();
   result = Object.fromEntries((await states(page)).map(([id, state]) => [id, state]));
   check(result["Topology-as-Code/example_customer"] === "failed", "the broken extension record fails its customer's check");

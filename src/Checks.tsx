@@ -1,4 +1,5 @@
 import type { CheckInfo, CheckResult } from "./types";
+import { FindingList } from "./FindingList";
 
 export function ChecksView({ checks, results, running }: {
   checks: CheckInfo[];
@@ -35,10 +36,10 @@ function Result({ check, result }: { check: CheckInfo; result?: CheckResult }) {
         {result && <span className="ms">{(result.ms / 1000).toFixed(1)} s</span>}
       </div>
       {result && result.errors.length > 0 && (
-        <ul className="findings">{result.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+        <FindingList items={result.errors} />
       )}
       {result && result.warnings.length > 0 && (
-        <ul className="findings warnings">{result.warnings.map((w, i) => <li key={i}>Hinweis: {w}</li>)}</ul>
+        <FindingList items={result.warnings} warnings />
       )}
       {result && (
         <details>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { FindingList } from "./FindingList";
 import { findingsFor } from "./graph";
 import { entryLabel, findLists, listKey, type ListRef } from "./lists";
 import { emptyValue, schemaAt } from "./schema";
@@ -180,7 +181,7 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
           {(entry === "new" || stored) && (
             <>
               {stored && findingsFor(label, findings).length > 0 && (
-                <ul className="findings">{findingsFor(label, findings).map((f, i) => <li key={i}>{f}</li>)}</ul>
+                <FindingList items={findingsFor(label, findings)} />
               )}
               <ObjectFields
                 catalog={catalog}
