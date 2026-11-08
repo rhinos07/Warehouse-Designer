@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LanguageSwitch, t, tn, useLang } from "./i18n";
 import { FindingList } from "./FindingList";
 import { ChangesView, type ChangedFile } from "./Changes";
 import { ChecksView } from "./Checks";
@@ -37,7 +38,7 @@ export default function App() {
   const worker = useRef<Worker | null>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<Phase>("loading");
-  const [status, setStatus] = useState("Wird gestartet …");
+  const [status, setStatus] = useState("starting"); // a status key while loading, the error text once failed
   const [specs, setSpecs] = useState<{ repos: SpecsInfo; generatedAt: string } | null>(null);
   const [examples, setExamples] = useState<UserFile[]>([]);
   const [catalog, setCatalog] = useState<Catalog>({});
@@ -120,12 +121,12 @@ export default function App() {
 
   function files(): UserFile[] | undefined {
     if (current.length) return current;
-    setNotice("In diesem Ordner liegen keine Daten. Erwartet werden die Ordner customers/, sites/ oder examples/ eines Repos.");
+    setNotice(t("app.noDataNotice"));
     return undefined;
   }
 
   function changeSource(next: Scan | null) {
-    if (edits.length && !window.confirm("Ungespeicherte Änderungen verwerfen?")) return;
+    if (edits.length && !window.confirm(t("app.confirmDiscardSource"))) return;
     setScan(next);
     setChosen("");
     setEdits([]);
@@ -157,11 +158,11 @@ export default function App() {
 
   function loadTopology() {
     if (!current.length) {
-      setTopology({ version, buildings: [], note: "Der Ordner enthält keine Daten." });
+      setTopology({ version, buildings: [], note: "app.folderNoData" });
       return;
     }
     if (!current.some((f) => f.repo === TOPOLOGY)) {
-      setTopology({ version, buildings: [], note: "Der Ordner enthält keine Topology-as-Code-Daten." });
+      setTopology({ version, buildings: [], note: "app.folderNoTopology" });
       return;
     }
     // After an edit, also validate the edited customers, so the diagram shows the result at once.
@@ -202,7 +203,7 @@ export default function App() {
       setScan({ ...scan, files: scan.files.map((f) => (written.has(f.path) ? { ...f, text: written.get(f.path)! } : f)) });
       setEdits([]); // same data as before, now saved: no new version
       setNotice("");
-      setSaved(`${targets.length} Datei${targets.length === 1 ? "" : "en"} im Ordner „${scan.rootName}“ gespeichert.`);
+      setSaved(tn("app.saved", targets.length, { folder: scan.rootName }));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     }
@@ -232,6 +233,7 @@ export default function App() {
     changeData([...edits, { key: `${TOPOLOGY}/${change.path}`, text: change.text, summary: change.summary }]);
   }
 
+  const lang = useLang();
   const busy = phase !== "ready";
   const checkFindings = (list: CheckResult[]) =>
     list.filter((r) => r.repo === TOPOLOGY).flatMap((r) => [...r.errors, ...r.warnings]);
@@ -247,29 +249,29 @@ export default function App() {
   return (
     <div className="page">
       <header>
-        <h1>Warehouse Designer</h1>
-        <p className="lead">
-          Zeigt, prüft und bearbeitet Lagerdefinitionen aus Topology-, Allocation-, OrderOrchestration-, MasterData- und
-          Warehouse-as-Code mit den Prüfregeln der Repos selbst. Ihre Dateien verlassen den Browser nicht.
-        </p>
+        <div className="title-row">
+          <h1>Warehouse Designer</h1>
+          <LanguageSwitch />
+        </div>
+        <p className="lead">{t("app.lead")}</p>
       </header>
 
       <section className="panel">
         <div className="source">
           <span>
-            Daten: <strong data-source>{scan ? scan.rootName : "Beispieldaten der Repos"}</strong>
+            {t("app.data")}: <strong data-source>{scan ? scan.rootName : t("app.exampleData")}</strong>
             {scan && layout && <span className="hint"> – {describe(layout)}</span>}
-            {scan && !scan.handle && <span className="hint"> (nur lesen)</span>}
+            {scan && !scan.handle && <span className="hint"> ({t("app.readOnly")})</span>}
           </span>
           <div className="actions">
-            <button onClick={openFolder} disabled={busy}>Ordner öffnen …</button>
-            {scan && <button className="secondary" onClick={() => changeSource(null)} disabled={busy}>Beispieldaten verwenden</button>}
+            <button onClick={openFolder} disabled={busy}>{t("app.openFolder")}</button>
+            {scan && <button className="secondary" onClick={() => changeSource(null)} disabled={busy}>{t("app.useExamples")}</button>}
           </div>
           <input ref={folderInput} type="file" hidden {...{ webkitdirectory: "" }} onChange={(e) => onFileList(e.target.files)} />
         </div>
         {layout?.kind === "unknown" && (
           <label className="choose">
-            Die Daten gehören zu{" "}
+            {t("app.dataBelongsTo")}{" "}
             <select
               value={chosen}
               onChange={(e) => {
@@ -278,13 +280,13 @@ export default function App() {
                 setVersion((v) => v + 1);
               }}
             >
-              <option value="">– Repo wählen –</option>
+              <option value="">{t("app.chooseRepo")}</option>
               {REPOS.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </label>
         )}
-        {phase === "loading" && <p className="status">{status}</p>}
-        {phase === "failed" && <p className="status error">Fehler: {status}</p>}
+        {phase === "loading" && <p className="status">{t(`status.${status}`)}</p>}
+        {phase === "failed" && <p className="status error">{t("app.error")}: {status}</p>}
         {notice && <p className="status error">{notice}</p>}
         {saved && <p className="status ok" data-saved>{saved}</p>}
       </section>
@@ -293,25 +295,25 @@ export default function App() {
         files={changed}
         log={edits.map((e) => e.summary)}
         busy={busy}
-        saveLabel={scan?.handle ? "In Ordner speichern" : undefined}
+        saveLabel={scan?.handle ? t("app.saveToFolder") : undefined}
         onSave={save}
         onUndo={() => changeData(edits.slice(0, -1))}
-        onDiscard={() => window.confirm("Alle ungespeicherten Änderungen verwerfen?") && changeData([])}
+        onDiscard={() => window.confirm(t("app.confirmDiscardAll")) && changeData([])}
       />
 
       <nav className="tabs" role="tablist">
-        <button role="tab" aria-selected={tab === "checks"} onClick={() => setTab("checks")}>Prüfen</button>
-        <button role="tab" aria-selected={tab === "topology"} onClick={() => setTab("topology")}>Topologie</button>
-        <button role="tab" aria-selected={tab === "workflow"} onClick={() => setTab("workflow")}>Aufträge</button>
-        <button role="tab" aria-selected={tab === "data"} onClick={() => setTab("data")}>Daten</button>
+        <button role="tab" aria-selected={tab === "checks"} onClick={() => setTab("checks")}>{t("tab.checks")}</button>
+        <button role="tab" aria-selected={tab === "topology"} onClick={() => setTab("topology")}>{t("tab.topology")}</button>
+        <button role="tab" aria-selected={tab === "workflow"} onClick={() => setTab("workflow")}>{t("tab.workflow")}</button>
+        <button role="tab" aria-selected={tab === "data"} onClick={() => setTab("data")}>{t("tab.data")}</button>
       </nav>
 
       {tab === "checks" && (
         <>
-          <button onClick={runChecks} disabled={busy || unresolved}>Prüfung starten</button>
-          {edits.length > 0 && <span className="hint"> Geprüft wird mit den ungespeicherten Änderungen.</span>}
+          <button onClick={runChecks} disabled={busy || unresolved}>{t("app.runChecks")}</button>
+          {edits.length > 0 && <span className="hint"> {t("app.checksUseEdits")}</span>}
           {checks.length > 0 && checkedVersion !== version && (
-            <p className="hint">Die Daten haben sich seit dieser Prüfung geändert.</p>
+            <p className="hint">{t("app.checksStale")}</p>
           )}
           <ChecksView checks={checks} results={results} running={phase === "running"} />
         </>
@@ -319,17 +321,17 @@ export default function App() {
 
       {tab === "topology" && (
         <section data-topology={topology?.version === version && phase === "ready" ? "fresh" : "stale"}>
-          {unresolved && <p className="status">Bitte oben wählen, zu welchem Repo die Daten gehören.</p>}
-          {phase === "running" && !topology && <p className="status">Hallen werden kompiliert …</p>}
-          {phase === "running" && topology && <p className="status" data-validating>Wird neu kompiliert und geprüft …</p>}
-          {topology?.note && <p className="status">{topology.note}</p>}
+          {unresolved && <p className="status">{t("app.chooseRepoFirst")}</p>}
+          {phase === "running" && !topology && <p className="status">{t("app.compiling")}</p>}
+          {phase === "running" && topology && <p className="status" data-validating>{t("app.recompiling")}</p>}
+          {topology?.note && <p className="status">{t(topology.note)}</p>}
           {topology && !topology.note && (
             <>
               {topology.checks ? (
                 <Validation checks={topology.checks} />
               ) : (
                 checkedVersion !== version && (
-                  <p className="hint">Tipp: Nach „Prüfung starten“ werden Knoten mit Befunden hier rot markiert.</p>
+                  <p className="hint">{t("app.tipNodes")}</p>
                 )
               )}
               <TopologyView
@@ -351,11 +353,11 @@ export default function App() {
 
       {tab === "workflow" && (
         <section data-workflow={phase === "ready" && (!editedChecks.length || dataChecks?.version === version) ? "fresh" : "stale"}>
-          {unresolved && <p className="status">Bitte oben wählen, zu welchem Repo die Daten gehören.</p>}
+          {unresolved && <p className="status">{t("app.chooseRepoFirst")}</p>}
           {editedChecks.length > 0 && dataChecks?.version === version && <Validation checks={dataChecks.checks} />}
-          {editedChecks.length > 0 && dataChecks?.version !== version && <p className="status">Wird geprüft …</p>}
+          {editedChecks.length > 0 && dataChecks?.version !== version && <p className="status">{t("app.checking")}</p>}
           {!editedChecks.length && checkedVersion !== version && (
-            <p className="hint">Tipp: Nach „Prüfung starten“ werden Regeln mit Befunden hier rot markiert.</p>
+            <p className="hint">{t("app.tipRules")}</p>
           )}
           {!unresolved && specs && (
             <WorkflowView
@@ -374,9 +376,9 @@ export default function App() {
 
       {tab === "data" && (
         <section data-data={phase === "ready" && (!editedChecks.length || dataChecks?.version === version) ? "fresh" : "stale"}>
-          {unresolved && <p className="status">Bitte oben wählen, zu welchem Repo die Daten gehören.</p>}
+          {unresolved && <p className="status">{t("app.chooseRepoFirst")}</p>}
           {editedChecks.length > 0 && dataChecks?.version === version && <Validation checks={dataChecks.checks} />}
-          {editedChecks.length > 0 && dataChecks?.version !== version && <p className="status">Wird geprüft …</p>}
+          {editedChecks.length > 0 && dataChecks?.version !== version && <p className="status">{t("app.checking")}</p>}
           {!unresolved && specs && (
             <DataView
               key={source}
@@ -393,7 +395,7 @@ export default function App() {
 
       {specs && (
         <footer>
-          Prüfregeln und Schemas vom {new Date(specs.generatedAt).toLocaleString("de-DE")}:{" "}
+          {t("app.footer", { date: new Date(specs.generatedAt).toLocaleString(lang === "de" ? "de-DE" : "en-GB") })}{" "}
           {Object.entries(specs.repos).map(([name, info], i) => (
             <span key={name}>
               {i > 0 && " · "}
@@ -417,8 +419,8 @@ function Validation({ checks }: { checks: CheckResult[] }) {
   return (
     <div className={`validation ${errors.length ? "failed" : "ok"}`} data-validation={errors.length ? "failed" : "ok"}>
       {errors.length
-        ? `Nach der Änderung meldet validate.py ${errors.length} Fehler:`
-        : `Nach der Änderung: validate.py ohne Fehler (${checks.map((c) => c.id).join(", ")}).`}
+        ? tn("app.validationFailed", errors.length)
+        : t("app.validationOk", { checks: checks.map((c) => c.id).join(", ") })}
       <FindingList items={errors} />
       <FindingList items={warnings} warnings />
     </div>
@@ -426,7 +428,7 @@ function Validation({ checks }: { checks: CheckResult[] }) {
 }
 
 function describe(layout: ReturnType<typeof detectLayout>): string {
-  if (layout.kind === "workspace") return `enthält ${layout.repos.join(", ")}`;
-  if (layout.kind === "repo") return `Daten von ${layout.repo}`;
-  return "Repo unbekannt";
+  if (layout.kind === "workspace") return t("app.layoutWorkspace", { repos: layout.repos.join(", ") });
+  if (layout.kind === "repo") return t("app.layoutRepo", { repo: layout.repo });
+  return t("app.layoutUnknown");
 }

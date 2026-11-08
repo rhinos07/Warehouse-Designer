@@ -1,25 +1,15 @@
 import dagre from "@dagrejs/dagre";
+import { tl, tn } from "./i18n";
 import type { Building, Entity } from "./types";
 
 export type NodeKind = "storage_type" | "door" | "work_center" | "reporting_point" | "storage_point";
 
-export const KIND_LABEL: Record<NodeKind, string> = {
-  storage_type: "Lagertyp",
-  door: "Tor",
-  work_center: "Arbeitsplatz",
-  reporting_point: "Meldepunkt",
-  storage_point: "Lagerplatz",
-};
+/** A node kind in the current language: storage_type → Lagertyp / Storage type. */
+export const kindLabel = (kind: string) => tl("kind", kind);
 
-export const MODE_LABEL: Record<string, string> = {
-  conveyor: "Förderer",
-  lane: "Fahrweg",
-  forklift: "Stapler",
-  tugger: "Schlepper",
-  amr: "AMR",
-  walking: "zu Fuß",
-  controller_internal: "intern",
-};
+/** Transport modes of the physical connections, in legend order. */
+export const MODES = ["conveyor", "lane", "forklift", "tugger", "amr", "walking", "controller_internal"];
+export const modeLabel = (mode: string | undefined) => tl("mode", mode ?? "");
 
 // A work center or reporting point with storage_point_ref compiles to a
 // storage point of the same id too; show it as what it is.
@@ -29,7 +19,8 @@ export interface TopoNode {
   id: string;
   kind: NodeKind;
   entity?: Entity;
-  subtitle: string;
+  /** Storage points of a storage type. */
+  points?: number;
   x: number;
   y: number;
   width: number;
@@ -60,14 +51,16 @@ export interface Graph {
 const size = (kind: NodeKind) =>
   kind === "reporting_point" || kind === "storage_point" ? { width: 130, height: 44 } : { width: 190, height: 58 };
 
-function subtitle(kind: NodeKind, e: Entity | undefined, points: number | undefined): string {
-  if (!e) return KIND_LABEL[kind];
+/** The second line of a node: its kind and what matters about it. */
+export function subtitle(node: Pick<TopoNode, "kind" | "entity" | "points">): string {
+  const { kind, entity: e, points } = node;
+  if (!e) return kindLabel(kind);
   const parts: unknown[] = [];
-  if (kind === "storage_type") parts.push(e.technology, points ? `${points} ${points === 1 ? "Platz" : "Plätze"}` : undefined);
-  if (kind === "door") parts.push(e.direction === "inbound" ? "Eingang" : e.direction === "outbound" ? "Ausgang" : e.direction);
+  if (kind === "storage_type") parts.push(e.technology, points ? tn("graph.points", points) : undefined);
+  if (kind === "door") parts.push(tl("doorDirection", String(e.direction ?? "")));
   if (kind === "work_center") parts.push(e.step);
   if (kind === "reporting_point") parts.push(e.type);
-  return [KIND_LABEL[kind], ...parts.filter(Boolean)].join(" · ");
+  return [kindLabel(kind), ...parts.filter(Boolean)].join(" · ");
 }
 
 const asList = (value: unknown): string[] => (Array.isArray(value) ? value.map(String) : value == null ? [] : [String(value)]);
@@ -109,7 +102,7 @@ export function buildGraph(building: Building): Graph {
     const mode = String(edge.transport_mode ?? "");
     const item: TopoEdge = {
       id: `can:${source}:${from}:${to}`, source: from, target: to, both: false, kind: "can",
-      label: MODE_LABEL[mode] ?? mode, mode, entityId: source, sourceType: String(edge.source_type ?? ""),
+      label: mode, mode, entityId: source, sourceType: String(edge.source_type ?? ""),
     };
     pairs.set(`${source}|${from}|${to}`, item);
     can.push(item);
@@ -148,7 +141,7 @@ export function buildGraph(building: Building): Graph {
     const entity = byId.get(id)?.entity;
     return {
       id, kind, entity, width, height, x: x - width / 2, y: y - height / 2,
-      subtitle: subtitle(kind, entity, building.point_counts?.[id]),
+      points: building.point_counts?.[id],
     };
   });
   return { nodes, can, rules, unplaced };

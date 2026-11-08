@@ -2,6 +2,7 @@
 // (`npm run bundle` first). Run with `npm run test:unit`.
 import fs from "node:fs";
 import { describePath, explain } from "../src/findings";
+import { TEXTS } from "../src/i18n";
 import { LISTS } from "../src/lists";
 import { child, kindOf, resolve, schemaAt, unresolved, type Located } from "../src/schema";
 import { appendItem, getItem, readYaml, removeItem, updateItem, type Item } from "../src/yamlEdit";
@@ -193,6 +194,39 @@ const sourceMisses = fromSource.filter((line) => !explain(line).translated || / 
 check(sourceMisses.length === 0, `findings from rules that compare fields are translated${sourceMisses.length ? `:\n    ${sourceMisses.map((l) => explain(l).text).join("\n    ")}` : ""}`);
 const unknown = explain("customers/x/company.yaml: something entirely new happened");
 check(!unknown.translated && unknown.text === "something entirely new happened" && unknown.location === "x · Firma", "an unknown finding keeps its text, with a readable location");
+
+// ---- German and English texts ----
+const deKeys = Object.keys(TEXTS.de).sort();
+const enKeys = Object.keys(TEXTS.en).sort();
+check(JSON.stringify(deKeys) === JSON.stringify(enKeys), `German and English have the same ${deKeys.length} texts`);
+const placeholders = (text: string) => JSON.stringify((text.match(/\{\w+\}/g) ?? []).sort());
+const mismatched = deKeys.filter((k) => placeholders(TEXTS.de[k]) !== placeholders(TEXTS.en[k]));
+check(mismatched.length === 0, `both languages fill in the same placeholders${mismatched.length ? `: ${mismatched.join(", ")}` : ""}`);
+const germanInEnglish = enKeys.filter((k) => /[äöüÄÖÜß„]/.test(TEXTS.en[k]));
+check(germanInEnglish.length === 0, `no German letters in the English texts${germanInEnglish.length ? `: ${germanInEnglish.join(", ")}` : ""}`);
+// Every key the code asks for exists (literal keys; t(`...${x}`) is checked through its prefix).
+const used = new Set<string>();
+for (const file of fs.readdirSync("src").filter((f) => /\.tsx?$/.test(f))) {
+  const code = fs.readFileSync(`src/${file}`, "utf8");
+  for (const m of code.matchAll(/\bt\("([\w.]+)"/g)) used.add(m[1]);
+  for (const m of code.matchAll(/\btn\("([\w.]+)"/g)) used.add(`${m[1]}_one`).add(`${m[1]}_other`);
+  for (const m of code.matchAll(/\bt\(`([\w.]+)\.\$\{/g)) used.add(`${m[1]}.*`);
+  for (const m of code.matchAll(/\btl\("([\w]+)"/g)) used.add(`${m[1]}.*`);
+}
+const missing = [...used].filter((k) => (k.endsWith(".*") ? !deKeys.some((d) => d.startsWith(k.slice(0, -1))) : !(k in TEXTS.de)));
+check(missing.length === 0, `every text the code uses exists (${used.size} keys)${missing.length ? `: ${missing.join(", ")}` : ""}`);
+
+const englishFinding = explain(
+  "MasterData-as-Code/customers/example_customer/categories/beverages/structure/items.yaml: item 'ITEM_003': storage_condition 'frozen_xyz' not found in elements/storage_conditions.yaml",
+  "en",
+);
+check(
+  englishFinding.location === "Master data · example_customer · Category beverages · Items" &&
+    englishFinding.subject === "Item ITEM_003" &&
+    englishFinding.text === "storage_condition 'frozen_xyz' not found in elements/storage_conditions.yaml",
+  `in English a finding keeps the tool's words, with location and subject in English (${JSON.stringify(englishFinding)})`,
+);
+check(corpus.every((line) => explain(line, "en").text.length > 0), "every finding of the corpus has an English text");
 
 console.log(failures.length ? `\n${failures.length} failure(s)` : "\nall unit checks passed");
 process.exit(failures.length ? 1 : 0);

@@ -11,6 +11,8 @@
 // 8. The order workflows: flow and status diagrams of each order type, new
 //    rules through the data tab's forms, validated by OrderOrchestration's
 //    validate.py and flagged in the diagram.
+// 9. The language switch: English for an English browser, German on a
+//    click, kept across a reload; findings in the tools' own English.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -85,7 +87,7 @@ async function openHall(page, hall) {
 }
 
 async function editTests(browser) {
-  const page = await browser.newPage();
+  const page = await browser.newPage({ locale: "de-DE" });
   await page.addInitScript(() => delete window.showDirectoryPicker);
   page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
   await page.goto(URL);
@@ -196,7 +198,7 @@ function fakeFolder(files) {
 async function saveTests(browser) {
   const files = Object.fromEntries(Object.entries(specs.repos["Topology-as-Code"].files).filter(([p]) => p.startsWith("customers/")));
   const storage = "customers/example_customer/facilities/facility_pa11/buildings/hall_3/structure/storage.yaml";
-  const page = await browser.newPage();
+  const page = await browser.newPage({ locale: "de-DE" });
   await page.addInitScript(fakeFolder, files);
   page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
   await page.goto(URL);
@@ -246,7 +248,7 @@ async function applyAndValidate(page, name) {
 }
 
 async function dataTests(browser) {
-  const page = await browser.newPage();
+  const page = await browser.newPage({ locale: "de-DE" });
   await page.addInitScript(() => delete window.showDirectoryPicker);
   page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
   await page.goto(URL);
@@ -308,7 +310,7 @@ async function dataTests(browser) {
 }
 
 async function workflowTests(browser) {
-  const page = await browser.newPage();
+  const page = await browser.newPage({ locale: "de-DE" });
   page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
   await page.goto(URL);
   const open = page.getByRole("button", { name: "Ordner öffnen …" });
@@ -364,11 +366,51 @@ async function workflowTests(browser) {
   await page.close();
 }
 
+async function languageTests(browser) {
+  const page = await browser.newPage({ locale: "en-US" });
+  page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
+  await page.goto(URL);
+  const run = page.getByRole("button", { name: "Run checks" });
+  await run.waitFor({ timeout: TIMEOUT });
+  check(await page.getByRole("tab", { name: "Topology" }).isVisible(), "an English browser gets the English page");
+  check((await page.locator("html").getAttribute("lang")) === "en", "the page declares its language");
+
+  await page.getByRole("tab", { name: "Data" }).click();
+  await page.locator(".data-toolbar select").selectOption({ label: "Items – example_customer / beverages" });
+  await page.locator('[data-entry="ITEM_003"]').click();
+  await page.locator('[data-field="storage_condition"] input').fill("frozen_xyz");
+  const before = await page.locator("[data-changes] .change-log li").count();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await page.waitForFunction((n) => document.querySelectorAll("[data-changes] .change-log li").length === n + 1, before, { timeout: TIMEOUT });
+  await page.locator('[data-data="fresh"] [data-validation]').waitFor({ timeout: TIMEOUT });
+  const finding = page.locator("[data-validation] .finding").first();
+  check(
+    (await finding.locator(".f-location").textContent()) === "Master data · example_customer · Category beverages · Items" &&
+      (await finding.locator(".f-subject").textContent()) === "Item ITEM_003" &&
+      (await finding.locator(".f-text").textContent()) === "storage_condition 'frozen_xyz' not found in elements/storage_conditions.yaml",
+    "in English a finding shows the tool's words with an English location",
+  );
+  check((await page.locator("[data-changes]").textContent()).includes("1 unsaved change in 1 file"), "the changes panel speaks English");
+
+  await page.getByRole("button", { name: "DE", exact: true }).click();
+  check(await page.getByRole("tab", { name: "Daten" }).isVisible(), "DE switches the page to German at once");
+  check(
+    (await finding.locator(".f-text").textContent()) === "Lagerbedingung „frozen_xyz“ ist im Katalog „storage_conditions“ nicht vorhanden.",
+    "findings switch to German with the page",
+  );
+  check((await page.locator("[data-changes]").textContent()).includes("1 ungespeicherte Änderung in 1 Datei"), "unsaved edits survive the switch");
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.reload();
+  await page.getByRole("button", { name: "Prüfung starten" }).waitFor({ timeout: TIMEOUT });
+  check(await page.getByRole("tab", { name: "Topologie" }).isVisible(), "the choice is kept across a reload");
+  await page.close();
+}
+
 let browser;
 try {
   await waitForServer();
   browser = await chromium.launch();
-  const page = await browser.newPage();
+  const page = await browser.newPage({ locale: "de-DE" });
   // Force the read-only fallback so the folder can be supplied by the test.
   await page.addInitScript(() => delete window.showDirectoryPicker);
   page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
@@ -450,6 +492,7 @@ try {
   await saveTests(browser);
   await dataTests(browser);
   await workflowTests(browser);
+  await languageTests(browser);
 } catch (error) {
   failures.push(String(error));
   console.log(`FAIL ${error}`);

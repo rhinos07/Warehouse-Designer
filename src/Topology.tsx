@@ -15,7 +15,8 @@ import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { EditPanel, type Form } from "./EditPanel";
 import { EditError, ENDPOINT_KINDS, HOME, removeLink, removeNode, usages, type Change, type Files } from "./editor";
-import { buildGraph, findingsFor, KIND_LABEL, MODE_LABEL, type NodeKind, type TopoEdge, type TopoNode } from "./graph";
+import { buildGraph, findingsFor, kindLabel, modeLabel, MODES, subtitle, type NodeKind, type TopoEdge, type TopoNode } from "./graph";
+import { t, tl, useLang } from "./i18n";
 import type { Building, Entity } from "./types";
 
 const EDGE_COLOR: Record<string, string> = {
@@ -44,8 +45,8 @@ function TopoNodeView({ data, selected }: NodeProps<Node<TopoNodeData>>) {
     >
       <Handle type="target" position={Position.Left} />
       <div className="topo-id">{node.id}</div>
-      <div className="topo-sub">{node.subtitle}</div>
-      {findings.length > 0 && <span className="topo-flag" title="Befunde aus der Prüfung">{findings.length}</span>}
+      <div className="topo-sub">{subtitle(node)}</div>
+      {findings.length > 0 && <span className="topo-flag" title={t("topology.findings")}>{findings.length}</span>}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -99,6 +100,7 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
     }
   }
 
+  const lang = useLang();
   const flowNodes = useMemo<Node<TopoNodeData>[]>(
     () =>
       graph?.nodes.map((n) => ({
@@ -111,7 +113,7 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
         selected: n.id === selectedId,
         connectable: ENDPOINT_KINDS.includes(n.kind),
       })) ?? [],
-    [graph, findings, selectedId],
+    [graph, findings, selectedId, lang],
   );
   const flowEdges = useMemo<Edge[]>(() => {
     if (!graph) return [];
@@ -123,7 +125,7 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
         id: e.id,
         source: e.source,
         target: e.target,
-        label: e.label,
+        label: e.kind === "rule" ? e.label : modeLabel(e.mode),
         className: `edge-${e.kind}${chosen ? " chosen" : ""}`,
         style: {
           stroke: color,
@@ -136,9 +138,9 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
         markerStart: e.both ? marker : undefined,
       };
     });
-  }, [graph, showRules, selectedEdge]);
+  }, [graph, showRules, selectedEdge, lang]);
 
-  if (!buildings.length) return <p className="status">Keine Topology-Hallen gefunden.</p>;
+  if (!buildings.length) return <p className="status">{t("topology.noHalls")}</p>;
   const selected = graph?.nodes.find((n) => n.id === selectedId);
   const edge = graph?.can.find((e) => e.id === selectedEdge);
   const kindOf = (id: string) => graph?.nodes.find((n) => n.id === id)?.kind;
@@ -168,11 +170,11 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
         {edit && (
           <div className="edit-actions">
             {ENDPOINT_KINDS.includes(selected.kind) && (
-              <button onClick={() => setForm({ type: "connection", from: selected.id })} disabled={busy}>Verbindung hinzufügen …</button>
+              <button onClick={() => setForm({ type: "connection", from: selected.id })} disabled={busy}>{t("topology.addConnection")}</button>
             )}
             {onOpen && home && homePath && (
               <button className="secondary" onClick={() => onOpen({ path: homePath, key: home[1], id: selected.id })} disabled={busy}>
-                Alle Attribute bearbeiten …
+                {t("topology.editAttributes")}
               </button>
             )}
             {removable && (
@@ -180,12 +182,12 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
                 className="danger"
                 onClick={() => attempt(() => removeNode(building, files!, selected.kind, selected.id))}
                 disabled={busy || used.length > 0}
-                title={used.length ? `Wird noch verwendet: ${used.join(", ")}` : undefined}
+                title={used.length ? t("topology.stillUsed", { uses: used.join(", ") }) : undefined}
               >
-                {selected.id} löschen
+                {t("topology.delete", { id: selected.id })}
               </button>
             )}
-            {removable && used.length > 0 && <p className="hint">Löschen erst möglich, wenn nichts mehr darauf verweist: {used.join(", ")}.</p>}
+            {removable && used.length > 0 && <p className="hint">{t("topology.deleteBlocked", { uses: used.join(", ") })}</p>}
           </div>
         )}
       </Details>
@@ -194,8 +196,8 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
     aside = (
       <p className="hint">
         {edit
-          ? "Knoten anklicken, um ihn zu bearbeiten, oder eine Verbindung von einem Knoten zum anderen ziehen. Eine Verbindung anklicken, um sie zu löschen."
-          : "Einen Knoten anklicken, um seine Daten, Verbindungen und Regeln zu sehen."}
+          ? t("topology.hintEdit")
+          : t("topology.hintView")}
       </p>
     );
   }
@@ -204,7 +206,7 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
     <div className={`topology${edit ? " editing" : ""}`}>
       <div className="topo-toolbar">
         <label>
-          Halle{" "}
+          {t("topology.hall")}{" "}
           <select
             value={building.path}
             onChange={(e) => {
@@ -214,14 +216,13 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
           >
             {buildings.map((b) => (
               <option key={b.path} value={b.path}>
-                {b.ok ? `${b.customer} / ${b.facility} / ${b.name ?? b.building}` : `${b.path} (Fehler)`}
+                {b.ok ? `${b.customer} / ${b.facility} / ${b.name ?? b.building}` : `${b.path} (${t("topology.error")})`}
               </option>
             ))}
           </select>
         </label>
         <label>
-          <input type="checkbox" checked={showRules} onChange={(e) => setShowRules(e.target.checked)} /> Bewegungsregeln
-          („darf“) einblenden
+          <input type="checkbox" checked={showRules} onChange={(e) => setShowRules(e.target.checked)} /> {t("topology.showRules")}
         </label>
         {files && onChange && (
           <label>
@@ -233,21 +234,21 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
                 select(null);
               }}
             />{" "}
-            Bearbeiten
+            {t("topology.edit")}
           </label>
         )}
         {edit && (
           <div className="actions">
-            <button className="secondary" onClick={() => setForm({ type: "door" })} disabled={busy}>+ Tor</button>
-            <button className="secondary" onClick={() => setForm({ type: "work_center" })} disabled={busy}>+ Arbeitsplatz</button>
-            <button className="secondary" onClick={() => setForm({ type: "reporting_point" })} disabled={busy}>+ Meldepunkt</button>
+            <button className="secondary" onClick={() => setForm({ type: "door" })} disabled={busy}>{t("topology.addDoor")}</button>
+            <button className="secondary" onClick={() => setForm({ type: "work_center" })} disabled={busy}>{t("topology.addWorkCenter")}</button>
+            <button className="secondary" onClick={() => setForm({ type: "reporting_point" })} disabled={busy}>{t("topology.addReportingPoint")}</button>
           </div>
         )}
       </div>
 
       {!building.ok && (
         <div className="status error">
-          Diese Halle lässt sich nicht kompilieren:
+          {t("topology.compileError")}
           <pre>{building.error}</pre>
         </div>
       )}
@@ -289,13 +290,13 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
 
       {graph && showRules && graph.unplaced.length > 0 && (
         <div className="unplaced">
-          <h3>Regeln ohne festen Start- oder Zielknoten</h3>
-          <p className="hint">Platzhalter („*“), Bereiche oder Abschnitte – nicht als Linie darstellbar.</p>
+          <h3>{t("topology.unplacedTitle")}</h3>
+          <p className="hint">{t("topology.unplacedHint")}</p>
           <ul>
             {graph.unplaced.map((r) => (
               <li key={r.id}>
                 <strong>{r.id}</strong>: {endpoint(r.from)} → {endpoint(r.to)}
-                {r.allowed === false && <span className="forbidden"> (verboten)</span>}
+                {r.allowed === false && <span className="forbidden"> ({t("topology.forbidden")})</span>}
               </li>
             ))}
           </ul>
@@ -305,13 +306,6 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
   );
 }
 
-const SOURCE_LABEL: Record<string, string> = {
-  connection: "Verbindung",
-  lane: "Fahrweg",
-  conveyor_segment: "Förderabschnitt",
-  conveyor_main: "Hauptförderer",
-  controller_internal: "Steuerung (intern)",
-};
 
 function EdgeDetails({ edge, onRemove }: { edge: TopoEdge; onRemove: () => void }) {
   const type = edge.sourceType ?? "";
@@ -319,18 +313,18 @@ function EdgeDetails({ edge, onRemove }: { edge: TopoEdge; onRemove: () => void 
   return (
     <div data-edge={edge.entityId}>
       <h3>{edge.entityId}</h3>
-      <p className="hint">{SOURCE_LABEL[type] ?? type}</p>
+      <p className="hint">{tl("source", type)}</p>
       <p>
-        {edge.source} {edge.both ? "↔" : "→"} {edge.target} · {MODE_LABEL[edge.mode ?? ""] ?? edge.mode}
+        {edge.source} {edge.both ? "↔" : "→"} {edge.target} · {modeLabel(edge.mode)}
       </p>
-      {type === "lane" && <p className="hint">Ein Fahrweg verbindet alle seine Knoten; Löschen entfernt ihn ganz.</p>}
+      {type === "lane" && <p className="hint">{t("topology.laneHint")}</p>}
       {removable ? (
-        <button className="danger" onClick={onRemove}>{edge.entityId} löschen</button>
+        <button className="danger" onClick={onRemove}>{t("topology.delete", { id: edge.entityId })}</button>
       ) : (
         <p className="hint">
           {type === "controller_internal"
-            ? "Ergibt sich aus der gemeinsamen Steuerung der Knoten – dort ändern."
-            : "Der Hauptförderer (conveyor_main) wird hier nicht bearbeitet."}
+            ? t("topology.internalHint")
+            : t("topology.mainConveyorHint")}
         </p>
       )}
     </div>
@@ -350,41 +344,41 @@ function Details({ node, building, graph, findings, children }: {
   return (
     <div data-details={node.id}>
       <h3>{node.id}</h3>
-      <p className="hint">{KIND_LABEL[node.kind as NodeKind]}</p>
+      <p className="hint">{kindLabel(node.kind as NodeKind)}</p>
       {children}
       {findings.length > 0 && (
         <>
-          <h4>Befunde aus der Prüfung</h4>
+          <h4>{t("topology.findings")}</h4>
           <FindingList items={findings} />
         </>
       )}
       {node.entity && <Attributes entity={node.entity} />}
-      {points !== undefined && <p>Lagerplätze: {points}</p>}
-      <h4>Verbindungen („kann“)</h4>
+      {points !== undefined && <p>{t("topology.storagePoints", { n: points })}</p>}
+      <h4>{t("topology.connections")}</h4>
       {connections.length ? (
         <ul>
           {connections.map((e) => (
             <li key={e.id}>
               {e.both ? "↔" : e.source === node.id ? "→" : "←"} {e.source === node.id ? e.target : e.source} ·{" "}
-              {MODE_LABEL[e.mode ?? ""] ?? e.mode} <span className="hint">({e.entityId})</span>
+              {modeLabel(e.mode)} <span className="hint">({e.entityId})</span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="hint">keine</p>
+        <p className="hint">{t("topology.none")}</p>
       )}
-      <h4>Bewegungsregeln („darf“)</h4>
+      <h4>{t("topology.rules")}</h4>
       {rules.length ? (
         <ul>
           {rules.map((e) => (
             <li key={e.id}>
               {e.source === node.id ? `→ ${e.target}` : `← ${e.source}`} · {e.entityId}
-              {!e.allowed && <span className="forbidden"> (verboten)</span>}
+              {!e.allowed && <span className="forbidden"> ({t("topology.forbidden")})</span>}
             </li>
           ))}
         </ul>
       ) : (
-        <p className="hint">keine mit festem Knoten</p>
+        <p className="hint">{t("topology.noFixedRules")}</p>
       )}
     </div>
   );
@@ -416,7 +410,7 @@ const format = (value: unknown): string =>
 
 const endpoint = (value: unknown): string =>
   value == null
-    ? "beliebig"
+    ? t("topology.any")
     : typeof value === "object"
       ? Object.entries(value as Record<string, unknown>).map(([k, v]) => `${k} ${format(v)}`).join(", ")
       : String(value);
@@ -427,19 +421,19 @@ function Legend() {
     <div className="legend">
       {kinds.map((k) => (
         <span key={k} className="legend-item">
-          <span className={`legend-node kind-${k}`} /> {KIND_LABEL[k]}
+          <span className={`legend-node kind-${k}`} /> {kindLabel(k)}
         </span>
       ))}
-      {Object.entries(MODE_LABEL).map(([mode, label]) => (
+      {MODES.map((mode) => [mode, modeLabel(mode)]).map(([mode, label]) => (
         <span key={mode} className="legend-item">
           <span className="legend-line" style={{ borderTopColor: EDGE_COLOR[mode], borderTopStyle: mode === "controller_internal" ? "dashed" : "solid" }} /> {label}
         </span>
       ))}
       <span className="legend-item">
-        <span className="legend-line" style={{ borderTopColor: EDGE_COLOR.rule, borderTopStyle: "dashed" }} /> Regel erlaubt
+        <span className="legend-line" style={{ borderTopColor: EDGE_COLOR.rule, borderTopStyle: "dashed" }} /> {t("topology.ruleAllowed")}
       </span>
       <span className="legend-item">
-        <span className="legend-line" style={{ borderTopColor: EDGE_COLOR.forbidden, borderTopStyle: "dashed" }} /> Regel verboten
+        <span className="legend-line" style={{ borderTopColor: EDGE_COLOR.forbidden, borderTopStyle: "dashed" }} /> {t("topology.ruleForbidden")}
       </span>
     </div>
   );

@@ -77,6 +77,14 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   kind the tools produce on broken example data (698 kinds, collected with
   `scripts/collect-findings.py`); the unit test requires all of them to be
   translated.
+- **German or English** (switch "DE | EN" at the top). The first visit
+  follows the browser's language; the choice is kept in the browser.
+  - **German:** findings are German sentences, as described above.
+  - **English:** findings keep the tools' own wording, with location and
+    subject in English.
+
+  All texts live in `src/i18n.tsx`, one table per language. The unit test
+  checks that both tables have the same entries and placeholders.
 - **Review and save:** unsaved edits are listed with a diff per file.
   - "In Ordner speichern" writes them back into the opened folder (Edge and
     Chrome). It refuses if a file changed on disk in the meantime.

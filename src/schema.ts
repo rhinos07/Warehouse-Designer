@@ -2,6 +2,7 @@
 // a repo's schema files, allOf merged, and defaults for new values. Checking
 // stays with the repos' own validate.py.
 import { readYaml, type Value } from "./yamlEdit";
+import { t } from "./i18n";
 import type { Catalog } from "./types";
 
 export type Schema = { [key: string]: any };
@@ -21,7 +22,7 @@ function load(catalog: Catalog, repo: string, file: string): Schema {
   const key = `${repo}/${file}`;
   if (!cache.has(key)) {
     const text = catalog[repo]?.[file];
-    if (text === undefined) throw new Error(`Schema ${key} fehlt im Build.`);
+    if (text === undefined) throw new Error(t("schema.missing", { key }));
     cache.set(key, JSON.parse(text));
   }
   return cache.get(key)!;

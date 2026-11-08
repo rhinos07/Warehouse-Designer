@@ -14,10 +14,10 @@ let specs: Specs;
 const post = (message: FromWorker) => self.postMessage(message);
 
 async function init(base: string) {
-  post({ type: "status", text: "Python-Laufzeit wird geladen …" });
+  post({ type: "status", text: "loadingPython" });
   const { loadPyodide } = await import(/* @vite-ignore */ `${base}pyodide/pyodide.mjs`);
   py = await loadPyodide({ indexURL: `${base}pyodide/` });
-  post({ type: "status", text: "Prüfwerkzeuge werden geladen …" });
+  post({ type: "status", text: "loadingTools" });
   await py.loadPackage(["pyyaml", "jsonschema"]);
   const response = await fetch(`${base}specs.json`);
   if (!response.ok) throw new Error(`specs.json: HTTP ${response.status}`);

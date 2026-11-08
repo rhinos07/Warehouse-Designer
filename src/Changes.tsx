@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { countChanges, diffLines } from "./diff";
+import { t, tn } from "./i18n";
 
 export interface ChangedFile {
   path: string; // shown to the user: repo path, e.g. Topology-as-Code/customers/...
@@ -23,20 +24,17 @@ export function ChangesView({ files, log, busy, saveLabel, onSave, onUndo, onDis
     <section className="changes panel" data-changes>
       <div className="changes-head">
         <strong>
-          {log.length} ungespeicherte Änderung{log.length === 1 ? "" : "en"} in {files.length} Datei{files.length === 1 ? "" : "en"}
+          {tn("changes.edits", log.length)} {tn("changes.inFiles", files.length)}
         </strong>
         <div className="actions">
           {saveLabel && <button onClick={onSave} disabled={busy}>{saveLabel}</button>}
-          <button className="secondary" onClick={onUndo} disabled={busy}>Rückgängig</button>
-          <button className="secondary" onClick={onDiscard} disabled={busy}>Alle verwerfen</button>
+          <button className="secondary" onClick={onUndo} disabled={busy}>{t("changes.undo")}</button>
+          <button className="secondary" onClick={onDiscard} disabled={busy}>{t("changes.discardAll")}</button>
         </div>
       </div>
       <ol className="change-log">{log.map((entry, i) => <li key={i}>{entry}</li>)}</ol>
       {!saveLabel && (
-        <p className="hint">
-          Speichern direkt in den Ordner geht in Edge und Chrome nach „Ordner öffnen …“. Hier die geänderten Dateien
-          herunterladen und im Repo ersetzen:
-        </p>
+        <p className="hint">{t("changes.downloadHint")}</p>
       )}
       {files.map((file) => <FileDiff key={file.path} file={file} download={!saveLabel} />)}
     </section>
@@ -55,7 +53,7 @@ function FileDiff({ file, download }: { file: ChangedFile; download: boolean }) 
         {download && (
           <>
             {" "}
-            <a href={url} download={file.path.split("/").pop()} onClick={(e) => e.stopPropagation()}>herunterladen</a>
+            <a href={url} download={file.path.split("/").pop()} onClick={(e) => e.stopPropagation()}>{t("changes.download")}</a>
           </>
         )}
       </summary>

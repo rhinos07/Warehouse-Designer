@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { FindingList } from "./FindingList";
 import { findingsFor } from "./graph";
-import { entryLabel, findLists, listKey, type ListRef } from "./lists";
+import { t } from "./i18n";
+import { entryLabel, findLists, listKey, listLabel, type ListRef } from "./lists";
 import { emptyValue, schemaAt } from "./schema";
 import { ObjectFields } from "./SchemaForm";
 import type { Catalog, CheckResult, UserFile } from "./types";
@@ -83,7 +84,7 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
     return checks.filter((c) => c.id === `${list.def.repo}/${list.customer}`).flatMap((c) => [...c.errors, ...c.warnings]);
   }, [checks, list]);
 
-  if (!lists.length) return <p className="status">In diesen Daten gibt es keine bearbeitbaren Listen.</p>;
+  if (!lists.length) return <p className="status">{t("data.noLists")}</p>;
   if (!list || !at) return null;
 
   function attempt(make: () => FileChange, select?: ItemRef | null) {
@@ -94,20 +95,20 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
-  const label = single ? list.def.label : stored ? entryLabel(stored, index) : "";
+  const label = single ? listLabel(list.def) : stored ? entryLabel(stored, index) : "";
   const change = (newText: string, summary: string): FileChange => ({ repo: list.def.repo, path: list.path, text: newText, summary });
 
   function create() {
     const id = typeof draft.id === "string" ? draft.id.trim() : undefined;
     if (usesIds) {
-      if (!id) return setError("Bitte eine ID angeben.");
+      if (!id) return setError(t("data.needId"));
       const pattern = at!.schema.properties?.id?.pattern;
-      if (pattern && !new RegExp(pattern).test(id)) return setError(`Die ID muss dem Muster ${pattern} entsprechen.`);
-      if (entries.some((e) => e.id === id)) return setError(`${id} gibt es in dieser Liste schon.`);
+      if (pattern && !new RegExp(pattern).test(id)) return setError(t("data.idPattern", { pattern }));
+      if (entries.some((e) => e.id === id)) return setError(t("data.idTaken", { id }));
     }
     const item = usesIds ? { ...draft, id } : draft;
     attempt(
-      () => change(appendItem(text, list!.def.key, item), `${list!.def.label}: ${id ?? entryLabel(item, entries.length)} angelegt`),
+      () => change(appendItem(text, list!.def.key, item), t("data.created", { list: listLabel(list!.def), entry: id ?? entryLabel(item, entries.length) })),
       usesIds ? id! : entries.length,
     );
   }
@@ -117,7 +118,7 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
     <div className="data-view">
       <div className="data-toolbar">
         <label>
-          Liste{" "}
+          {t("data.list")}{" "}
           <select
             value={listKey(list)}
             onChange={(e) => {
@@ -129,7 +130,7 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
               <optgroup key={repo} label={repo}>
                 {lists.filter((l) => l.def.repo === repo).map((l) => (
                   <option key={listKey(l)} value={listKey(l)}>
-                    {l.def.label} – {l.customer}{l.scope ? ` / ${l.scope}` : ""}
+                    {listLabel(l.def)} – {l.customer}{l.scope ? ` / ${l.scope}` : ""}
                   </option>
                 ))}
               </optgroup>
@@ -140,7 +141,7 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
       </div>
 
       <div className={`data-main${single ? " single" : ""}`}>
-        {!single && <nav className="data-entries" aria-label="Einträge">
+        {!single && <nav className="data-entries" aria-label={t("data.entries")}>
           {entries.map((e, i) => {
             const name = entryLabel(e, i);
             const flagged = findingsFor(name, findings).length > 0;
@@ -166,17 +167,17 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
             }}
             disabled={busy}
           >
-            + Neuer Eintrag
+            {t("data.newEntry")}
           </button>
         </nav>}
 
         <section className="data-form" data-form-entry={entry === "new" ? "new" : label || undefined}>
           {entry === "new" ? (
-            <h3>Neuer Eintrag in {list.def.label}</h3>
+            <h3>{t("data.newEntryIn", { list: listLabel(list.def) })}</h3>
           ) : stored ? (
             <h3>{label}</h3>
           ) : (
-            <p className="hint">Einen Eintrag wählen oder einen neuen anlegen. Felder und Auswahllisten kommen aus dem JSON-Schema des Repos.</p>
+            <p className="hint">{t("data.chooseEntry")}</p>
           )}
           {(entry === "new" || stored) && (
             <>
@@ -190,13 +191,13 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
                 onChange={(v) => setDraft(v)}
                 readOnlyKeys={entry === "new" ? [] : ["id"]}
               />
-              {entry === "new" && usesIds && <p className="hint">Die ID lässt sich nach dem Anlegen nicht mehr ändern.</p>}
+              {entry === "new" && usesIds && <p className="hint">{t("data.idFixed")}</p>}
               {error && <p className="status error" data-edit-error>{error}</p>}
               <div className="actions">
                 {entry === "new" ? (
                   <>
-                    <button onClick={create} disabled={busy}>Anlegen</button>
-                    <button className="secondary" onClick={() => setEntry(null)}>Abbrechen</button>
+                    <button onClick={create} disabled={busy}>{t("data.create")}</button>
+                    <button className="secondary" onClick={() => setEntry(null)}>{t("edit.cancel")}</button>
                   </>
                 ) : (
                   <>
@@ -205,16 +206,16 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
                         attempt(() =>
                           change(
                             single ? updateTop(text, list.def.key, draft) : updateItem(text, list.def.key, ref!, draft),
-                            single ? `${list.def.label} geändert` : `${list.def.label}: ${label} geändert`,
+                            single ? t("data.changedSingle", { list: listLabel(list.def) }) : t("data.changed", { list: listLabel(list.def), entry: label }),
                           ),
                         )
                       }
                       disabled={busy || same(draft, stored)}
                     >
-                      Übernehmen
+                      {t("data.apply")}
                     </button>
                     <button className="secondary" onClick={() => setDraftState(null)} disabled={same(draft, stored)}>
-                      Zurücksetzen
+                      {t("data.reset")}
                     </button>
                     {!single && <button
                       className="secondary"
@@ -224,17 +225,17 @@ export function DataView({ files, catalog, checks, busy, onChange, focus }: {
                       }}
                       disabled={busy}
                     >
-                      Kopieren …
+                      {t("data.copy")}
                     </button>}
                     {!single && <button
                       className="danger"
                       onClick={() =>
-                        window.confirm(`${label} löschen?`) &&
-                        attempt(() => change(removeItem(text, list.def.key, ref!), `${list.def.label}: ${label} gelöscht`), null)
+                        window.confirm(t("data.confirmDelete", { entry: label })) &&
+                        attempt(() => change(removeItem(text, list.def.key, ref!), t("data.deleted", { list: listLabel(list.def), entry: label })), null)
                       }
                       disabled={busy}
                     >
-                      Löschen
+                      {t("data.delete")}
                     </button>}
                   </>
                 )}

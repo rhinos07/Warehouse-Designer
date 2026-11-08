@@ -1,3 +1,5 @@
+import { getLang, type Lang } from "./i18n";
+
 // Findings in project language. The repos' tools report in English, with
 // file paths and schema terms ("storage_type 'HBR': ... not found in
 // elements/storage_technologies.yaml"). This turns them into German
@@ -373,6 +375,52 @@ const RULES: Rule[] = [
   [/^(?:[a-z_]+ )?([a-z_.]+) '([^']*)' not found$/, (m) => `${val(m[1], m[2])} ist nicht vorhanden.`],
 ];
 
+// English: the tools' own wording, with location and subject in plain English.
+const REPO_LABEL_EN: Record<string, string> = {
+  "Topology-as-Code": "Topology",
+  "Allocation-as-Code": "Allocation",
+  "OrderOrchestration-as-Code": "Orders",
+  "MasterData-as-Code": "Master data",
+  "Warehouse-as-Code": "Sites",
+};
+const FILE_LABEL_EN: Record<string, string> = {
+  "company.yaml": "Company", "facility.yaml": "Site", "warehouse.yaml": "Hall", "storage.yaml": "Storage structure",
+  "lanes.yaml": "Connections", "wcs.yaml": "Controllers and reporting points", "scan_codes.yaml": "Scan codes",
+  "movement_rules.yaml": "Movement rules", "replenishment.yaml": "Replenishment", "allocation.yaml": "Hall allocation",
+  "fields.yaml": "Fields", "search_rules.yaml": "Search rules", "putaway_rules.yaml": "Putaway rules",
+  "fixed_bin_assignments.yaml": "Fixed bins", "area_assignments.yaml": "Area assignments", "owner_zones.yaml": "Owner zones",
+  "category.yaml": "Category", "items.yaml": "Items", "packaging.yaml": "Packaging", "sourcing.yaml": "Sourcing",
+  "lifecycle.yaml": "Lifecycle", "load_unit_types.yaml": "Load unit types", "channel.yaml": "Channel",
+  "order_type.yaml": "Order type", "status.yaml": "Statuses", "split_rules.yaml": "Split rules",
+  "workflow_triggers.yaml": "Workflow triggers", "completion_rules.yaml": "Completion rules", "shortage_policy.yaml": "Shortage policy",
+};
+const ENTITY_EN_OVERRIDE: Record<string, string> = {
+  controller_definitions: "Controller", item_id: "Item", substitute_item_id: "Substitute item", replenishment_strategies: "Replenishment strategy",
+  warehouse: "Hall", building: "Hall", facility: "Site", site: "Site", "site id": "Site id", statuses: "Status", status: "Status",
+  equipment: "Equipment", packaging: "Packaging", sourcing: "Sourcing", lifecycle: "Lifecycle",
+};
+/** An entity word in English: storage_types → Storage type. */
+function entityEn(key: string): string {
+  if (ENTITY_EN_OVERRIDE[key]) return ENTITY_EN_OVERRIDE[key];
+  const words = key.replace(/_/g, " ").replace(/ies$/, "y").replace(/s$/, "");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** The language explain() is working in; set for the duration of one call. */
+let mode: Lang = "de";
+const en = () => mode === "en";
+/** The name of an entity word in the current language, if it names one. */
+const entityName = (key: string): string | undefined => (ENTITY[key] ? (en() ? entityEn(key) : ENTITY[key]) : undefined);
+
+const FOLDER_EN: Record<string, (v: string) => string> = {
+  facilities: (v) => v.replace(/^facility_/, "").toUpperCase(),
+  buildings: (v) => v.replace(/^hall_/, "Hall "),
+  categories: (v) => `Category ${v}`,
+  channels: (v) => `Channel ${v}`,
+  order_types: (v) => `Order type ${v}`,
+  examples: (v) => `Example ${v}`,
+};
+
 const FOLDER: Record<string, (v: string) => string> = {
   facilities: (v) => v.replace(/^facility_/, "").toUpperCase(),
   buildings: (v) => v.replace(/^hall_/, "Halle "),
@@ -383,24 +431,28 @@ const FOLDER: Record<string, (v: string) => string> = {
 };
 
 /** A file path as a place people know: area, customer, site, hall and what the file holds. */
-export function describePath(path: string): string {
+export function describePath(path: string, lang: Lang = mode): string {
+  const english = lang === "en";
+  const repoLabel = english ? REPO_LABEL_EN : REPO_LABEL;
+  const fileLabel = english ? FILE_LABEL_EN : FILE_LABEL;
+  const folder = english ? FOLDER_EN : FOLDER;
   const parts = path.split("/").filter(Boolean);
   const bits: string[] = [];
-  if (REPO_LABEL[parts[0]]) bits.push(REPO_LABEL[parts.shift()!]);
+  if (repoLabel[parts[0]]) bits.push(repoLabel[parts.shift()!]);
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i];
     if ((part === "customers" || part === "sites") && parts[i + 1] && i + 2 < parts.length) {
       bits.push(parts[++i]);
-    } else if (FOLDER[part] && parts[i + 1] && i + 1 < parts.length - (/\.\w+$/.test(parts[parts.length - 1]) ? 1 : 0)) {
-      bits.push(FOLDER[part](parts[++i]));
+    } else if (folder[part] && parts[i + 1] && i + 1 < parts.length - (/\.\w+$/.test(parts[parts.length - 1]) ? 1 : 0)) {
+      bits.push(folder[part](parts[++i]));
     }
   }
   const file = parts[parts.length - 1] ?? "";
   if (/\.(ya?ml|json)$/.test(file)) {
-    if (parts[0] === "sites") bits.push(`Standort ${file.replace(/\.ya?ml$/, "").toUpperCase()}`);
-    else if (parts.includes("extensions")) bits.push(`WMS-Erweiterung ${file}`);
-    else bits.push(FILE_LABEL[file] ?? file);
-  } else if (FOLDER[parts[parts.length - 2]]) {
+    if (parts[0] === "sites") bits.push(`${english ? "Site" : "Standort"} ${file.replace(/\.ya?ml$/, "").toUpperCase()}`);
+    else if (parts.includes("extensions")) bits.push(`${english ? "WMS extension" : "WMS-Erweiterung"} ${file}`);
+    else bits.push(fileLabel[file] ?? file);
+  } else if (folder[parts[parts.length - 2]]) {
     // a folder (e.g. Repo/examples/x) was handled above
   } else if (file) bits.push(file);
   return bits.join(" · ");
@@ -410,6 +462,7 @@ const FIELD: Record<string, string> = { steps: "Schritt", positions: "Position",
 
 /** "steps[0].zone" → "Schritt 1 › zone": list positions counted from 1, as people count. */
 function fieldPath(path: string): string {
+  if (en()) return path.replace(/\s*->\s*/g, " › ").replace(/\[(\d+)\]/g, "[$1]");
   return path
     .replace(/\b([a-z_]+)(?=\[\d+\]|\s*->\s*\d)/g, (w) => FIELD[w] ?? ENTITY[w] ?? w)
     .replace(/\[(\d+)\]/g, (_, n) => ` ${Number(n) + 1}`)
@@ -423,8 +476,22 @@ const SEGMENT: Record<string, string> = { from: "Start", to: "Ziel", exclude_to:
 
 const PATH = /^((?:[\w.-]+\/)*[\w.-]+\.(?:ya?ml|json)|[\w-]+-as-Code(?:\/[\w.-]+)+):\s+([\s\S]*)$/;
 
-/** A finding as a German sentence with location and subject; the original stays in `original`. */
-export function explain(raw: string): Finding {
+/**
+ * A finding with location and subject. In German the message becomes a
+ * German sentence; in English it stays in the tool's own words. The full
+ * original line is kept in `original`.
+ */
+export function explain(raw: string, lang: Lang = getLang()): Finding {
+  const previous = mode;
+  mode = lang;
+  try {
+    return explainIn(raw);
+  } finally {
+    mode = previous;
+  }
+}
+
+function explainIn(raw: string): Finding {
   const original = raw.trim();
   let rest = original;
   const location: string[] = [];
@@ -438,13 +505,13 @@ export function explain(raw: string): Finding {
   }
   const inner = /^([\w-]+\.ya?ml) ([\s\S]*)$/.exec(rest);
   if (inner) {
-    location.push(FILE_LABEL[inner[1]] ?? inner[1]);
+    location.push((en() ? FILE_LABEL_EN : FILE_LABEL)[inner[1]] ?? inner[1]);
     rest = inner[2];
   }
   // An example order: "order [path] ...", "positions[0] [path] ..."
   const order = /^(order|positions\[\d+\])\s+(\[[\s\S]*)$/.exec(rest);
   if (order) {
-    where.push(order[1] === "order" ? "Auftragskopf" : fieldPath(order[1]));
+    where.push(order[1] === "order" ? (en() ? "order header" : "Auftragskopf") : fieldPath(order[1]));
     rest = order[2];
   }
   // A schema path: "[site -> allocation] ..."
@@ -458,17 +525,18 @@ export function explain(raw: string): Finding {
   const numbered = /^([a-z_]+) #(\d+):\s+([\s\S]*)$/.exec(rest);
   const indexed = /^([a-z_]+)\[(\d+)\](?:\s*\(([^)]*)\))?([.\w[\]]*)(?::\s+|\s+)([\s\S]*)$/.exec(rest);
   if (named && ENTITY[named[1]]) {
-    subject = named[2] === "?" ? ENTITY[named[1]] : `${ENTITY[named[1]]} ${named[2]}`;
+    subject = named[2] === "?" ? entityName(named[1])! : `${entityName(named[1])} ${named[2]}`;
     if (named[3]) where.push(fieldPath(named[3].slice(1)));
     rest = named[4];
   } else if (numbered && ENTITY[numbered[1]]) {
-    subject = `${ENTITY[numbered[1]]} Nr. ${numbered[2]}`;
+    subject = `${entityName(numbered[1])} ${en() ? "#" : "Nr. "}${numbered[2]}`;
     rest = numbered[3];
   } else if (indexed && ENTITY[indexed[1]]) {
-    subject = `${ENTITY[indexed[1]]} Nr. ${Number(indexed[2]) + 1}${indexed[3] ? ` (${indexed[3]})` : ""}`;
+    subject = `${entityName(indexed[1])} ${en() ? "#" : "Nr. "}${Number(indexed[2]) + 1}${indexed[3] ? ` (${indexed[3]})` : ""}`;
     if (indexed[4]) where.push(fieldPath(indexed[4].replace(/^\./, "")));
     rest = indexed[5];
   }
+  if (en()) return { location: location.join(" · "), subject, text: where.length ? `${where.join(", ")}: ${rest}` : rest, original, translated: true };
   // A field inside the subject: "steps[0]: ...", "zone.type ..."
   const field = /^([a-z_]+(?:\[\d+\])?(?:\.[a-z_]+(?:\[\d+\])?)*):\s+([\s\S]*)$/.exec(rest);
   if (field && (/[[.]/.test(field[1]) || ENTITY[field[1]])) {

@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import { DATA_DIRS, REPOS, type RepoName, type UserFile } from "./types";
 
 export interface ScannedFile {
@@ -42,7 +43,7 @@ export async function pickDirectory(): Promise<Scan> {
   const files: ScannedFile[] = [];
   async function walk(dir: DirectoryHandle, prefix: string) {
     for await (const entry of dir.values()) {
-      if (files.length >= MAX_FILES) throw new Error(`Mehr als ${MAX_FILES} Dateien – bitte einen kleineren Ordner wählen.`);
+      if (files.length >= MAX_FILES) throw new Error(t("folder.tooMany", { max: MAX_FILES }));
       if (entry.kind === "directory") {
         if (!SKIP_DIRS.has(entry.name)) await walk(entry, `${prefix}${entry.name}/`);
       } else if (TEXT_FILE.test(entry.name)) {
@@ -114,14 +115,14 @@ async function fileHandle(root: DirectoryHandle, path: string): Promise<FileHand
  */
 export async function writeFiles(root: DirectoryHandle, files: { path: string; text: string; expected: string }[]): Promise<void> {
   if ((await root.queryPermission({ mode: "readwrite" })) !== "granted" && (await root.requestPermission({ mode: "readwrite" })) !== "granted") {
-    throw new Error("Ohne Schreibrecht für den Ordner kann nicht gespeichert werden.");
+    throw new Error(t("folder.noWrite"));
   }
   const changed: string[] = [];
   for (const file of files) {
     if ((await (await (await fileHandle(root, file.path)).getFile()).text()) !== file.expected) changed.push(file.path);
   }
   if (changed.length) {
-    throw new Error(`Nicht gespeichert: ${changed.join(", ")} wurde inzwischen außerhalb geändert. Ordner neu öffnen und die Änderung wiederholen.`);
+    throw new Error(t("folder.changedOutside", { files: changed.join(", ") }));
   }
   for (const file of files) {
     const writable = await (await fileHandle(root, file.path)).createWritable();
