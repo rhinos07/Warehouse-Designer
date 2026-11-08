@@ -1,5 +1,6 @@
 // Topology edits on a building's source files. Each edit returns the changed
 // file; the page then recompiles and revalidates with the repo's own tools.
+import { t } from "./i18n";
 import type { Building } from "./types";
 import { appendItem, EditError, readYaml, removeItem, type Item } from "./yamlEdit";
 
@@ -40,7 +41,7 @@ export const HOME: Record<string, [file: string, key: string]> = {
 
 function source(building: Building, files: Files, name: string): [path: string, text: string] {
   const path = building.sources?.[name];
-  if (!path || files[path] === undefined) throw new EditError(`Die Halle importiert keine ${name}.`);
+  if (!path || files[path] === undefined) throw new EditError(t("editor.noImport", { file: name }));
   return [path, files[path]];
 }
 
@@ -77,14 +78,14 @@ export function addConnection(
   files: Files,
   input: { from: string; to: string; direction: string; transport_mode: string; minutes?: number },
 ): Change {
-  if (input.from === input.to) throw new EditError("Start und Ziel müssen verschieden sein.");
+  if (input.from === input.to) throw new EditError(t("editor.sameEnds"));
   const [path, text] = source(building, files, "lanes.yaml");
   const id = unique(`${MODE_PREFIX[input.transport_mode] ?? "CON"}_${input.from}_TO_${input.to}`, takenIds(building, files));
   const item: Item = {
     id, from: input.from, to: input.to, direction: input.direction, transport_mode: input.transport_mode,
     expected_duration: input.minutes ? { value: input.minutes, unit: "min" } : undefined,
   };
-  return { path, text: appendItem(text, "connections", item), summary: `Verbindung ${id} hinzugefügt` };
+  return { path, text: appendItem(text, "connections", item), summary: t("editor.added.connection", { id }) };
 }
 
 export function addDoor(
@@ -95,7 +96,7 @@ export function addDoor(
   const [path, text] = source(building, files, "storage.yaml");
   const id = nextId("DOOR", takenIds(building, files));
   const item: Item = { id, direction: input.direction, staging_section: input.staging_section, determination_group: input.determination_group || undefined };
-  return { path, text: appendItem(text, "doors", item), summary: `Tor ${id} hinzugefügt`, select: id };
+  return { path, text: appendItem(text, "doors", item), summary: t("editor.added.door", { id }), select: id };
 }
 
 export function addWorkCenter(
@@ -104,11 +105,11 @@ export function addWorkCenter(
   input: { step: string; storage_point_ref: boolean; description?: string },
 ): Change {
   const step = input.step.trim();
-  if (!step) throw new EditError("Bitte einen Prozessschritt angeben.");
+  if (!step) throw new EditError(t("editor.needStep"));
   const [path, text] = source(building, files, "storage.yaml");
   const id = nextId(`WC_${upperId(step)}`, takenIds(building, files));
   const item: Item = { id, step, storage_point_ref: input.storage_point_ref || undefined, description: input.description?.trim() || undefined };
-  return { path, text: appendItem(text, "work_centers", item), summary: `Arbeitsplatz ${id} hinzugefügt`, select: id };
+  return { path, text: appendItem(text, "work_centers", item), summary: t("editor.added.work_center", { id }), select: id };
 }
 
 export function addReportingPoint(
@@ -116,14 +117,14 @@ export function addReportingPoint(
   files: Files,
   input: { controller: string; type: string; capacity: number; storage_point_ref: boolean; description?: string },
 ): Change {
-  if (!input.controller) throw new EditError("Die Halle hat keine Steuerung (controller_definitions) in wcs.yaml.");
+  if (!input.controller) throw new EditError(t("editor.noController"));
   const [path, text] = source(building, files, "wcs.yaml");
   const id = nextId("RP", takenIds(building, files));
   const item: Item = {
     id, storage_point_ref: input.storage_point_ref, controller: input.controller, type: input.type,
     capacity: input.capacity, description: input.description?.trim() || undefined,
   };
-  return { path, text: appendItem(text, "reporting_points", item), summary: `Meldepunkt ${id} hinzugefügt`, select: id };
+  return { path, text: appendItem(text, "reporting_points", item), summary: t("editor.added.reporting_point", { id }), select: id };
 }
 
 const names = (value: unknown): string[] => (Array.isArray(value) ? value.map(String) : value == null ? [] : [String(value)]);
@@ -134,11 +135,11 @@ export function usages(building: Building, files: Files, id: string): string[] {
   const lanesPath = building.sources?.["lanes.yaml"];
   if (lanesPath && files[lanesPath] !== undefined) {
     const lanes = readYaml(files[lanesPath]);
-    for (const c of list(lanes.connections)) if (c.from === id || c.to === id) found.push(`Verbindung ${c.id}`);
-    for (const s of list(lanes.conveyor_segments)) if (s.from === id || s.to === id) found.push(`Förderabschnitt ${s.id}`);
-    for (const l of list(lanes.lanes)) if (names(l.connects).includes(id)) found.push(`Fahrweg ${l.id}`);
+    for (const c of list(lanes.connections)) if (c.from === id || c.to === id) found.push(`${t("source.connection")} ${c.id}`);
+    for (const s of list(lanes.conveyor_segments)) if (s.from === id || s.to === id) found.push(`${t("source.conveyor_segment")} ${s.id}`);
+    for (const l of list(lanes.lanes)) if (names(l.connects).includes(id)) found.push(`${t("source.lane")} ${l.id}`);
     const main = lanes.conveyor_main as Record<string, unknown> | undefined;
-    if (main && names(main.connects).includes(id)) found.push("Hauptförderer (conveyor_main)");
+    if (main && names(main.connects).includes(id)) found.push(`${t("source.conveyor_main")} (conveyor_main)`);
   }
   const rulesPath = building.sources?.["movement_rules.yaml"];
   if (rulesPath && files[rulesPath] !== undefined) {
@@ -155,19 +156,19 @@ export function usages(building: Building, files: Files, id: string): string[] {
 /** Removes a door, work center or reporting point - only if nothing in the building still uses it. */
 export function removeNode(building: Building, files: Files, kind: string, id: string): Change {
   const home = HOME[kind];
-  if (!home || !["door", "work_center", "reporting_point"].includes(kind)) throw new EditError("Dieses Element kann hier nicht gelöscht werden.");
+  if (!home || !["door", "work_center", "reporting_point"].includes(kind)) throw new EditError(t("editor.cannotDeleteNode"));
   const used = usages(building, files, id);
-  if (used.length) throw new EditError(`${id} wird noch verwendet: ${used.join(", ")}. Bitte zuerst diese Einträge entfernen.`);
+  if (used.length) throw new EditError(t("editor.stillUsed", { id, uses: used.join(", ") }));
   const [path, text] = source(building, files, home[0]);
-  return { path, text: removeItem(text, home[1], id), summary: `${id} gelöscht` };
+  return { path, text: removeItem(text, home[1], id), summary: t("editor.deleted", { id }) };
 }
 
 /** Removes an explicit connection, a lane or a conveyor segment. */
 export function removeLink(building: Building, files: Files, sourceType: string, id: string): Change {
   const home = HOME[sourceType];
-  if (!home || home[0] !== "lanes.yaml") throw new EditError("Diese Verbindung kann hier nicht gelöscht werden.");
+  if (!home || home[0] !== "lanes.yaml") throw new EditError(t("editor.cannotDeleteLink"));
   const [path, text] = source(building, files, home[0]);
-  return { path, text: removeItem(text, home[1], id), summary: `${id} gelöscht` };
+  return { path, text: removeItem(text, home[1], id), summary: t("editor.deleted", { id }) };
 }
 
 /** `<storage type>.<section>` of every section in storage.yaml, for a door's staging_section. */

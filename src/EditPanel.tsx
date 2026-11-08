@@ -14,7 +14,8 @@ import {
   type Change,
   type Files,
 } from "./editor";
-import { MODE_LABEL, type Graph } from "./graph";
+import { modeLabel, type Graph } from "./graph";
+import { t, tl } from "./i18n";
 import type { Building } from "./types";
 
 export type Form =
@@ -23,19 +24,6 @@ export type Form =
   | { type: "work_center" }
   | { type: "reporting_point" };
 
-const TITLE: Record<Form["type"], string> = {
-  connection: "Neue Verbindung („kann“)",
-  door: "Neues Tor",
-  work_center: "Neuer Arbeitsplatz",
-  reporting_point: "Neuer Meldepunkt",
-};
-const DIRECTION_LABEL: Record<string, string> = { bidirectional: "in beide Richtungen", one_way: "nur in Pfeilrichtung" };
-const DOOR_LABEL: Record<string, string> = { inbound: "Eingang", outbound: "Ausgang", returns: "Retouren" };
-const RP_LABEL: Record<string, string> = {
-  identification_point: "Identifikationspunkt",
-  aisle_decision_point: "Gassenentscheidung",
-  clarification_point: "Klärplatz",
-};
 
 export function EditPanel({ form, building, files, graph, onChange, onCancel }: {
   form: Form;
@@ -103,51 +91,50 @@ export function EditPanel({ form, building, files, graph, onChange, onCancel }: 
     }
   }
 
-  const select = (key: string, label: string, options: string[], labels: Record<string, string> = {}) => (
+  const select = (key: string, label: string, options: string[], labelOf: (value: string) => string = (v) => v) => (
     <Field label={label}>
       <select value={text(key)} onChange={set(key)}>
-        {options.map((o) => <option key={o} value={o}>{labels[o] ?? o}</option>)}
+        {options.map((o) => <option key={o} value={o}>{labelOf(o)}</option>)}
       </select>
     </Field>
   );
   const pointRef = (
     <label className="check">
-      <input type="checkbox" checked={Boolean(values.storage_point_ref)} onChange={set("storage_point_ref")} /> Bestand kann hier gebucht
-      werden (storage_point_ref)
+      <input type="checkbox" checked={Boolean(values.storage_point_ref)} onChange={set("storage_point_ref")} /> {t("edit.pointRef")}
     </label>
   );
   const description = (
-    <Field label="Beschreibung (optional)">
+    <Field label={t("edit.description")}>
       <input value={text("description")} onChange={set("description")} />
     </Field>
   );
 
   return (
     <form className="edit-form" onSubmit={submit} data-form={form.type}>
-      <h3>{TITLE[form.type]}</h3>
+      <h3>{t(`edit.title.${form.type}`)}</h3>
       {form.type === "connection" && (
         <>
-          <p>Von <strong>{form.from}</strong></p>
-          {select("to", "Nach", endpoints.filter((id) => id !== form.from))}
-          {select("transport_mode", "Transportart", TRANSPORT_MODES, MODE_LABEL)}
-          {select("direction", "Richtung", DIRECTIONS, DIRECTION_LABEL)}
-          <Field label="Fahrzeit in Minuten (optional)">
+          <p>{t("edit.from")} <strong>{form.from}</strong></p>
+          {select("to", t("edit.to"), endpoints.filter((id) => id !== form.from))}
+          {select("transport_mode", t("edit.transportMode"), TRANSPORT_MODES, modeLabel)}
+          {select("direction", t("edit.direction"), DIRECTIONS, (v) => tl("connectionDirection", v))}
+          <Field label={t("edit.minutes")}>
             <input type="number" min="1" value={text("minutes")} onChange={set("minutes")} />
           </Field>
         </>
       )}
       {form.type === "door" && (
         <>
-          {select("door_direction", "Art", DOOR_DIRECTIONS, DOOR_LABEL)}
-          {select("staging_section", "Bereitstellung (staging_section)", sectionList)}
-          <Field label="Ermittlungsgruppe (optional)">
-            <input value={text("determination_group")} onChange={set("determination_group")} placeholder="z. B. pallets" />
+          {select("door_direction", t("edit.doorKind"), DOOR_DIRECTIONS, (v) => tl("doorDirection", v))}
+          {select("staging_section", t("edit.staging"), sectionList)}
+          <Field label={t("edit.determinationGroup")}>
+            <input value={text("determination_group")} onChange={set("determination_group")} placeholder={t("edit.determinationExample")} />
           </Field>
         </>
       )}
       {form.type === "work_center" && (
         <>
-          <Field label="Prozessschritt">
+          <Field label={t("edit.step")}>
             <input value={text("step")} onChange={set("step")} list="steps" required />
             <datalist id="steps">{steps.map((s) => <option key={s} value={s} />)}</datalist>
           </Field>
@@ -157,20 +144,20 @@ export function EditPanel({ form, building, files, graph, onChange, onCancel }: 
       )}
       {form.type === "reporting_point" && (
         <>
-          {select("controller", "Steuerung", controllers)}
-          {select("rp_type", "Typ", REPORTING_POINT_TYPES, RP_LABEL)}
-          <Field label="Kapazität (Ladeeinheiten)">
+          {select("controller", t("edit.controller"), controllers)}
+          {select("rp_type", t("edit.rpType"), REPORTING_POINT_TYPES, (v) => tl("rpType", v))}
+          <Field label={t("edit.capacity")}>
             <input type="number" min="1" value={text("capacity")} onChange={set("capacity")} />
           </Field>
           {pointRef}
           {description}
         </>
       )}
-      <p className="hint">Die ID vergibt das Werkzeug; sie ändert sich danach nicht mehr.</p>
+      <p className="hint">{t("edit.idHint")}</p>
       {error && <p className="status error">{error}</p>}
       <div className="actions">
-        <button type="submit">Hinzufügen</button>
-        <button type="button" className="secondary" onClick={onCancel}>Abbrechen</button>
+        <button type="submit">{t("edit.add")}</button>
+        <button type="button" className="secondary" onClick={onCancel}>{t("edit.cancel")}</button>
       </div>
     </form>
   );

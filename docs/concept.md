@@ -125,3 +125,12 @@ Findings in project language (open point from phase 1, done 2026-11-08):
 | Approach | The tools stay unchanged and keep reporting in English; the page translates their findings (`src/findings.ts`). The path becomes a location (Topologie · example_customer · PA11 · Halle 3 · Lagerstruktur), the entity the subject (Tor DOOR_01), and patterns turn the message into a German sentence. Field names and values stay as they are, quoted, so they can still be found in the files. The original line stays available under "Original". |
 | Coverage | `scripts/collect-findings.py` damages the example data on purpose: one kind of damage per file (unknown references, missing or unexpected fields, wrong types, negative numbers, duplicate ids). It records what each repo's `validate.py` and Warehouse-as-Code's `check_sites.py` report. That gave 3,074 findings of 698 kinds, kept in `tests/findings-corpus.json`. The unit test requires every kind to be translated and no English phrasing to remain. Rules that compare two fields (e.g. minimum shelf life at receipt longer than the whole shelf life) cannot be produced this way; they are tested with lines taken from the tools' source. |
 | New findings | A finding no pattern knows is shown with its original text and a readable location. When a spec repo adds a check, re-run the script and add a pattern for each new kind the unit test lists. |
+
+Language switch (2026-11-08): the page is available in German and English ("DE | EN" at the top; the first visit follows the browser language, the choice is stored in the browser).
+
+- **Texts:** all texts are in `src/i18n.tsx`, in two tables with the same keys (248 texts). The unit test checks:
+  - both tables have the same keys and placeholders;
+  - no German letters appear in the English texts;
+  - every key the code uses exists.
+- **Findings:** in German they are translated (see above). In English they keep the tools' own wording, which is English already, with location and subject in English.
+- **Switching** applies at once and keeps unsaved edits. Entries in the change log keep the language they were made in.

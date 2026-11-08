@@ -218,3 +218,10 @@ code.readonly { padding: 4px 0; }
 .f-original summary { display: inline; font-size: 11px; }
 .f-original[open] { display: block; }
 .f-original code { display: block; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; white-space: pre-wrap; }
+
+/* Language switch */
+.title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lang-switch { display: inline-flex; gap: 0; }
+.lang-switch button { padding: 4px 10px; font-size: 13px; }
+.lang-switch button:first-child { border-radius: 6px 0 0 6px; }
+.lang-switch button:last-child { border-radius: 0 6px 6px 0; border-left: none; }

@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { parse, stringify } from "yaml";
+import { t } from "./i18n";
 import { child, emptyValue, kindOf, resolve, suggestions, summary, type Located } from "./schema";
 import type { Catalog } from "./types";
 import type { Value } from "./yamlEdit";
@@ -73,10 +74,10 @@ export function Field(props: FieldProps) {
       <div className="sf-label">
         <label htmlFor={nested ? undefined : id} title={schema.description}>
           {name}
-          {required && <span className="sf-required" title="Pflichtfeld"> *</span>}
+          {required && <span className="sf-required" title={t("form.required")}> *</span>}
         </label>
         {onRemove && !readOnly && (
-          <button type="button" className="sf-icon" onClick={onRemove} title={`${name} entfernen`} aria-label={`${name} entfernen`}>×</button>
+          <button type="button" className="sf-icon" onClick={onRemove} title={t("form.remove", { name })} aria-label={t("form.remove", { name })}>×</button>
         )}
       </div>
       {schema.description && <div className="sf-hint">{summary(schema.description)}</div>}
@@ -125,10 +126,10 @@ export function ObjectFields({ catalog, at, value, onChange, readOnlyKeys = [] }
         <select
           className="sf-add"
           value=""
-          aria-label="Feld hinzufügen"
+          aria-label={t("form.addField")}
           onChange={(e) => e.target.value && set(e.target.value, emptyValue(catalog, child(at, properties[e.target.value])))}
         >
-          <option value="">+ Feld hinzufügen …</option>
+          <option value="">{t("form.addFieldOption")}</option>
           {absent.map((k) => <option key={k} value={k}>{k}</option>)}
         </select>
       )}
@@ -149,14 +150,14 @@ function ArrayField({ catalog, at, value, onChange }: { catalog: Catalog; at: Lo
         <div key={i} className="sf-entry" data-entry={i}>
           <div className="sf-entry-head">
             <span>{i + 1}.</span>
-            <button type="button" className="sf-icon" disabled={i === 0} onClick={() => move(i, i - 1)} aria-label="nach oben">↑</button>
-            <button type="button" className="sf-icon" disabled={i === value.length - 1} onClick={() => move(i, i + 1)} aria-label="nach unten">↓</button>
-            <button type="button" className="sf-icon" onClick={() => onChange(value.filter((_, j) => j !== i))} aria-label={`Eintrag ${i + 1} entfernen`}>×</button>
+            <button type="button" className="sf-icon" disabled={i === 0} onClick={() => move(i, i - 1)} aria-label={t("form.up")}>↑</button>
+            <button type="button" className="sf-icon" disabled={i === value.length - 1} onClick={() => move(i, i + 1)} aria-label={t("form.down")}>↓</button>
+            <button type="button" className="sf-icon" onClick={() => onChange(value.filter((_, j) => j !== i))} aria-label={t("form.removeEntry", { n: i + 1 })}>×</button>
           </div>
           <Field catalog={catalog} at={items} name={`${i + 1}`} value={item} onChange={(v) => onChange(value.map((x, j) => (j === i ? v : x)))} />
         </div>
       ))}
-      <button type="button" className="secondary sf-add-entry" onClick={() => onChange([...value, emptyValue(catalog, items)])}>+ Eintrag</button>
+      <button type="button" className="secondary sf-add-entry" onClick={() => onChange([...value, emptyValue(catalog, items)])}>{t("form.addEntry")}</button>
     </div>
   );
 }
@@ -180,7 +181,7 @@ function YamlField({ id, value, onChange }: { id: string; value: Value; onChange
             onChange(parse(text) ?? null);
             setError("");
           } catch (e) {
-            setError(`Kein gültiges YAML: ${(e as Error).message.split("\n")[0]}`);
+            setError(t("form.invalidYaml", { message: (e as Error).message.split("\n")[0] }));
           }
         }}
         spellCheck={false}

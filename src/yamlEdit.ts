@@ -1,6 +1,7 @@
 // Edits to the repos' YAML files as text splices: every byte outside the
 // changed values stays as it was - comments, quoting, alignment and blank
 // lines included - so a saved file diffs like a hand edit.
+import { t } from "./i18n";
 import { isMap, isScalar, isSeq, parseDocument, type Node, type Pair, type Scalar, type YAMLMap, type YAMLSeq } from "yaml";
 
 export type Value = string | number | boolean | null | Value[] | { [key: string]: Value } | undefined;
@@ -16,7 +17,7 @@ export function readYaml(text: string): Record<string, unknown> {
 
 function parse(text: string) {
   const doc = parseDocument(text);
-  if (doc.errors.length) throw new EditError(`Die Datei ist kein gültiges YAML: ${doc.errors[0].message}`);
+  if (doc.errors.length) throw new EditError(t("yaml.invalid", { message: doc.errors[0].message }));
   return doc;
 }
 
@@ -147,7 +148,7 @@ export function appendItem(text: string, key: string, item: Record<string, Value
     const end = lineEnd(text, seq?.range ? seq.range[1] : pair.key.range![1]);
     return `${text.slice(0, start)}${key}:\n${formatItem(item, 2, pad)}${text.slice(end)}`;
   }
-  throw new EditError(`„${key}“ ist keine Blockliste – bitte von Hand ändern.`);
+  throw new EditError(t("yaml.notBlock", { key }));
 }
 
 /** The lines of a block sequence item, with the comment and blank lines that lead into it. */
@@ -174,11 +175,11 @@ export type ItemRef = string | number;
 function findItem(text: string, key: string, ref: ItemRef): { pair: Pair<Node, Node | null>; seq: YAMLSeq; items: Node[]; index: number } {
   const pair = topPair(text, key);
   const seq = pair?.value;
-  if (!pair || !isSeq(seq)) throw new EditError(`Liste „${key}“ nicht gefunden.`);
+  if (!pair || !isSeq(seq)) throw new EditError(t("yaml.noList", { key }));
   const items = seq.items as Node[];
   const index = typeof ref === "number" ? (ref < items.length && isMap(items[ref]) ? ref : -1) : items.findIndex((it) => isMap(it) && it.get("id") === ref);
-  if (index < 0) throw new EditError(`„${ref}“ steht nicht in „${key}“.`);
-  if (seq.flow) throw new EditError(`„${key}“ ist keine Blockliste – bitte von Hand ändern.`);
+  if (index < 0) throw new EditError(t("yaml.notInList", { ref, key }));
+  if (seq.flow) throw new EditError(t("yaml.notBlock", { key }));
   return { pair, seq, items, index };
 }
 
@@ -343,7 +344,7 @@ export function getItem(text: string, key: string, ref: ItemRef): Item {
 /** The value of a top-level key that holds one object (e.g. shortage_policy), as plain data. */
 export function getTop(text: string, key: string): Record<string, Value> {
   const value = topPair(text, key)?.value;
-  if (!isMap(value)) throw new EditError(`„${key}“ nicht gefunden.`);
+  if (!isMap(value)) throw new EditError(t("yaml.notFound", { key }));
   return value.toJSON() as Record<string, Value>;
 }
 
@@ -351,7 +352,7 @@ export function getTop(text: string, key: string): Record<string, Value> {
 export function updateTop(text: string, key: string, value: Record<string, Value>): string {
   const pair = topPair(text, key);
   const node = pair?.value;
-  if (!pair || !isMap(node)) throw new EditError(`„${key}“ nicht gefunden.`);
+  if (!pair || !isMap(node)) throw new EditError(t("yaml.notFound", { key }));
   const patcher = new Patcher(text, padded(text));
   try {
     if (patcher.value(node, node.toJSON(), value, 0)) return patcher.apply();

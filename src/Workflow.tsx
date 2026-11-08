@@ -19,6 +19,7 @@ import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useState } from "react";
 import type { Focus } from "./DataView";
 import { findingsFor } from "./graph";
+import { t, tl, useLang } from "./i18n";
 import type { UserFile } from "./types";
 import { readYaml } from "./yamlEdit";
 
@@ -83,51 +84,43 @@ interface FlowLink {
   dashed?: boolean;
 }
 
-const KIND_LABEL: Record<Kind, string> = {
-  order: "Auftrag",
-  split: "Split-Regel",
-  trigger: "Workflow-Trigger",
-  completion: "Abschlussregel",
-  action: "Folgeaktion",
-  status: "Status",
-};
-const QUANTIFIER: Record<string, string> = { all_children: "alle Teilaufträge", any_child: "ein Teilauftrag" };
+const kindLabel = (kind: Kind) => t(`flow.kind.${kind}`);
 const list = (value: unknown): Obj[] => (Array.isArray(value) ? value.filter((v) => v && typeof v === "object") : []);
-const target = (t: unknown) => (t && typeof t === "object" ? `${(t as Obj).type} ${(t as Obj).id}` : "");
+const target = (value: unknown) => (value && typeof value === "object" ? `${(value as Obj).type} ${(value as Obj).id}` : "");
 
 /** The order flow: order → split rules → triggers, split rules → completion rules → follow-up actions. */
 function orderFlow(type: OrderType, read: (name: string) => Obj): { items: FlowItem[]; links: FlowLink[] } {
-  const items: FlowItem[] = [{ id: "order", kind: "order", title: type.id, subtitle: `${type.name} · Kanal ${type.channel}` }];
+  const items: FlowItem[] = [{ id: "order", kind: "order", title: type.id, subtitle: `${type.name} · ${t("flow.channel", { channel: type.channel })}` }];
   const links: FlowLink[] = [];
   const splits = list(read("split_rules.yaml").split_rules);
   for (const s of splits) {
     const when = s.when as Obj | undefined;
     const parts = [s.split_by && when?.dimension_value ? `${s.split_by} = ${when.dimension_value}` : String(s.condition ?? "")];
-    if (s.target_override) parts.push(`Ziel ${target(s.target_override)}`);
+    if (s.target_override) parts.push(t("flow.target", { target: target(s.target_override) }));
     items.push({ id: `split:${s.id}`, kind: "split", title: String(s.id), subtitle: parts.join(" · "), entity: s, home: ["split_rules.yaml", "split_rules"] });
     links.push({ source: "order", target: `split:${s.id}` });
   }
   const has = (id: string) => items.some((i) => i.id === id);
-  for (const t of list(read("workflow_triggers.yaml").workflow_triggers)) {
-    items.push({ id: `trigger:${t.id}`, kind: "trigger", title: String(t.trigger), subtitle: String(t.id), entity: t, home: ["workflow_triggers.yaml", "workflow_triggers"] });
-    const from = t.split_rule && has(`split:${t.split_rule}`) ? `split:${t.split_rule}` : "order";
-    links.push({ source: from, target: `trigger:${t.id}`, label: "löst aus" });
+  for (const trig of list(read("workflow_triggers.yaml").workflow_triggers)) {
+    items.push({ id: `trigger:${trig.id}`, kind: "trigger", title: String(trig.trigger), subtitle: String(trig.id), entity: trig, home: ["workflow_triggers.yaml", "workflow_triggers"] });
+    const from = trig.split_rule && has(`split:${trig.split_rule}`) ? `split:${trig.split_rule}` : "order";
+    links.push({ source: from, target: `trigger:${trig.id}`, label: t("flow.triggers") });
   }
   for (const c of list(read("completion_rules.yaml").completion_rules)) {
     const when = (c.when ?? {}) as Obj;
     const action = (c.action ?? {}) as Obj;
-    const cond = `wenn ${QUANTIFIER[String(when.quantifier)] ?? when.quantifier ?? ""} ${when.status ?? ""}${when.target_gap ? " mit Ziel-Lücke" : ""}`;
+    const cond = t(when.target_gap ? "flow.whenGap" : "flow.when", { quantifier: tl("quantifier", String(when.quantifier ?? "")), status: String(when.status ?? "") });
     items.push({ id: `completion:${c.id}`, kind: "completion", title: String(c.id), subtitle: cond.trim(), entity: c, home: ["completion_rules.yaml", "completion_rules"] });
     const sources = Array.isArray(when.source_split_rules) ? when.source_split_rules.map(String).filter((s) => has(`split:${s}`)) : [];
     for (const s of sources.length ? sources : []) links.push({ source: `split:${s}`, target: `completion:${c.id}`, dashed: true });
     if (!sources.length) links.push({ source: "order", target: `completion:${c.id}`, dashed: true });
     const what =
       action.type === "spawn_order"
-        ? `neuer Auftrag ${action.spawn_order_type ?? ""}${action.spawn_target ? ` → ${target(action.spawn_target)}` : ""}${action.supersedes_parent ? " · ersetzt den Auftrag" : ""}`
+        ? `${t("flow.spawn", { type: String(action.spawn_order_type ?? "") })}${action.spawn_target ? ` → ${target(action.spawn_target)}` : ""}${action.supersedes_parent ? ` · ${t("flow.supersedes")}` : ""}`
         : action.type === "reallocate_remainder"
           ? `Rest neu zuteilen als ${action.reallocate_order_type ?? ""}`
           : String(action.type ?? "");
-    items.push({ id: `action:${c.id}`, kind: "action", title: String(action.type ?? "Aktion"), subtitle: what, entity: c, home: ["completion_rules.yaml", "completion_rules"] });
+    items.push({ id: `action:${c.id}`, kind: "action", title: String(action.type ?? t("flow.kind.action")), subtitle: what, entity: c, home: ["completion_rules.yaml", "completion_rules"] });
     links.push({ source: `completion:${c.id}`, target: `action:${c.id}` });
   }
   return { items, links };
@@ -137,7 +130,7 @@ function orderFlow(type: OrderType, read: (name: string) => Obj): { items: FlowI
 function statusFlow(read: (name: string) => Obj): { items: FlowItem[]; links: FlowLink[] } {
   const data = read("status.yaml");
   const items: FlowItem[] = list(data.statuses).map((s) => ({
-    id: `status:${s.id}`, kind: "status", title: String(s.id), subtitle: s.terminal ? "Endstatus" : "", entity: s,
+    id: `status:${s.id}`, kind: "status", title: String(s.id), subtitle: s.terminal ? t("flow.terminal") : "", entity: s,
     home: ["status.yaml", "statuses"], terminal: s.terminal === true,
   }));
   const links = list(data.transitions).map((t) => ({ source: `status:${t.from}`, target: `status:${t.to}` }));
@@ -175,7 +168,7 @@ function FlowNode({ data, selected }: NodeProps<Node<FlowData>>) {
       <Handle type="target" position={Position.Left} />
       <div className="topo-id">{item.title}</div>
       {item.subtitle && <div className="topo-sub" title={item.subtitle}>{item.subtitle}</div>}
-      {findings.length > 0 && <span className="topo-flag" title="Befunde aus der Prüfung">{findings.length}</span>}
+      {findings.length > 0 && <span className="topo-flag" title={t("topology.findings")}>{findings.length}</span>}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -269,10 +262,11 @@ export function WorkflowView({ files, findings, onOpen, busy }: {
       return {};
     }
   }, [type, texts]);
-  const flow = useMemo(() => (type ? orderFlow(type, read) : null), [type, read]);
-  const status = useMemo(() => (type ? statusFlow(read) : null), [type, read]);
+  const lang = useLang();
+  const flow = useMemo(() => (type ? orderFlow(type, read) : null), [type, read, lang]);
+  const status = useMemo(() => (type ? statusFlow(read) : null), [type, read, lang]);
 
-  if (!types.length || !type || !flow || !status) return <p className="status">In diesen Daten gibt es keine OrderOrchestration-Auftragsarten.</p>;
+  if (!types.length || !type || !flow || !status) return <p className="status">{t("flow.noOrderTypes")}</p>;
   const item = [...flow.items, ...status.items].find((i) => i.id === selected);
   const open = (file: string, key: string, id: string) => {
     const p = type.files[file];
@@ -285,7 +279,7 @@ export function WorkflowView({ files, findings, onOpen, busy }: {
     <div className="workflow">
       <div className="topo-toolbar">
         <label>
-          Auftragsart{" "}
+          {t("flow.orderType")}{" "}
           <select
             value={type.path}
             onChange={(e) => {
@@ -300,58 +294,58 @@ export function WorkflowView({ files, findings, onOpen, busy }: {
         </label>
         <div className="actions">
           {type.files["split_rules.yaml"] && (
-            <button className="secondary" onClick={() => open("split_rules.yaml", "split_rules", "")} disabled={busy}>+ Split-Regel</button>
+            <button className="secondary" onClick={() => open("split_rules.yaml", "split_rules", "")} disabled={busy}>{t("flow.addSplit")}</button>
           )}
           {type.files["workflow_triggers.yaml"] && (
-            <button className="secondary" onClick={() => open("workflow_triggers.yaml", "workflow_triggers", "")} disabled={busy}>+ Trigger</button>
+            <button className="secondary" onClick={() => open("workflow_triggers.yaml", "workflow_triggers", "")} disabled={busy}>{t("flow.addTrigger")}</button>
           )}
           {type.files["completion_rules.yaml"] && (
-            <button className="secondary" onClick={() => open("completion_rules.yaml", "completion_rules", "")} disabled={busy}>+ Abschlussregel</button>
+            <button className="secondary" onClick={() => open("completion_rules.yaml", "completion_rules", "")} disabled={busy}>{t("flow.addCompletion")}</button>
           )}
         </div>
       </div>
 
       <div className="topo-main">
         <div className="workflow-diagrams">
-          <h3>Ablauf</h3>
+          <h3>{t("flow.flow")}</h3>
           <Diagram items={flow.items} links={flow.links} rankdir="LR" findings={findings} selected={selected} onSelect={setSelected} height={420} />
-          <h3>Status</h3>
+          <h3>{t("flow.status")}</h3>
           <Diagram items={status.items} links={status.links} rankdir="LR" findings={findings} selected={selected} onSelect={setSelected} height={260} />
         </div>
         <aside className="topo-details">
           {item ? (
             <div data-flow-details={item.id}>
               <h3>{item.title}</h3>
-              <p className="hint">{KIND_LABEL[item.kind]}</p>
+              <p className="hint">{kindLabel(item.kind)}</p>
               {item.entity && findingsFor(String(item.entity.id ?? ""), findings).length > 0 && (
                 <FindingList items={findingsFor(String(item.entity.id), findings)} />
               )}
               {item.entity && <Attributes entity={item.entity} />}
               {item.home && item.entity && (
                 <button onClick={() => open(item.home![0], item.home![1], String(item.entity!.id))} disabled={busy}>
-                  Bearbeiten …
+                  {t("flow.edit")}
                 </button>
               )}
               {item.kind === "order" && (
-                <p className="hint">Split-Regeln teilen den Auftrag in Teilaufträge; Trigger übergeben sie ans Lager; Abschlussregeln entscheiden, was nach ihrem Abschluss passiert.</p>
+                <p className="hint">{t("flow.orderHint")}</p>
               )}
             </div>
           ) : (
-            <p className="hint">Einen Knoten anklicken, um seine Regel zu sehen und zu bearbeiten.</p>
+            <p className="hint">{t("flow.clickHint")}</p>
           )}
-          <h4>Fehlmengen</h4>
-          {shortage ? <Attributes entity={shortage} /> : <p className="hint">keine shortage_policy</p>}
-          {shortage && <button className="secondary" onClick={() => open("shortage_policy.yaml", "shortage_policy", "")} disabled={busy}>Fehlmengen-Regel bearbeiten …</button>}
-          <h4>Felder</h4>
-          {fields ? <Attributes entity={fields} /> : <p className="hint">keine fields</p>}
-          {fields && <button className="secondary" onClick={() => open("fields.yaml", "fields", "")} disabled={busy}>Felder bearbeiten …</button>}
+          <h4>{t("flow.shortage")}</h4>
+          {shortage ? <Attributes entity={shortage} /> : <p className="hint">{t("flow.noShortage")}</p>}
+          {shortage && <button className="secondary" onClick={() => open("shortage_policy.yaml", "shortage_policy", "")} disabled={busy}>{t("flow.editShortage")}</button>}
+          <h4>{t("flow.fields")}</h4>
+          {fields ? <Attributes entity={fields} /> : <p className="hint">{t("flow.noFields")}</p>}
+          {fields && <button className="secondary" onClick={() => open("fields.yaml", "fields", "")} disabled={busy}>{t("flow.editFields")}</button>}
         </aside>
       </div>
       <div className="legend">
         {(["order", "split", "trigger", "completion", "action", "status"] as Kind[]).map((k) => (
-          <span key={k} className="legend-item"><span className={`legend-node flow-${k}`} /> {KIND_LABEL[k]}</span>
+          <span key={k} className="legend-item"><span className={`legend-node flow-${k}`} /> {kindLabel(k)}</span>
         ))}
-        <span className="legend-item"><span className="legend-line" style={{ borderTopColor: "var(--muted)", borderTopStyle: "dashed" }} /> Abschluss der Teilaufträge</span>
+        <span className="legend-item"><span className="legend-line" style={{ borderTopColor: "var(--muted)", borderTopStyle: "dashed" }} /> {t("flow.legendCompletion")}</span>
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import { t, tn } from "./i18n";
 import type { CheckInfo, CheckResult } from "./types";
 import { FindingList } from "./FindingList";
 
@@ -13,10 +14,10 @@ export function ChecksView({ checks, results, running }: {
     <section>
       <h2>
         {running
-          ? `Prüfung läuft … ${done.length} von ${checks.length}`
+          ? t("checks.running", { done: done.length, total: checks.length })
           : failed
-            ? `${failed} von ${checks.length} Prüfungen mit Fehlern`
-            : `Alle ${checks.length} Prüfungen ohne Fehler`}
+            ? t("checks.failed", { failed, total: checks.length })
+            : t("checks.allOk", { total: checks.length })}
       </h2>
       {checks.map((check) => (
         <Result key={check.id} check={check} result={results[check.id]} />
@@ -30,7 +31,7 @@ function Result({ check, result }: { check: CheckInfo; result?: CheckResult }) {
   return (
     <article className={`result ${state}`} data-check={check.id} data-state={state}>
       <div className="result-head">
-        <span className="badge">{!result ? "…" : result.ok ? "OK" : `${result.errors.length} Fehler`}</span>
+        <span className="badge">{!result ? "…" : result.ok ? "OK" : tn("checks.errors", result.errors.length)}</span>
         <span className="repo">{check.repo}</span>
         <span className="title">{check.title}</span>
         {result && <span className="ms">{(result.ms / 1000).toFixed(1)} s</span>}
@@ -43,7 +44,7 @@ function Result({ check, result }: { check: CheckInfo; result?: CheckResult }) {
       )}
       {result && (
         <details>
-          <summary>Ausgabe des Prüfwerkzeugs</summary>
+          <summary>{t("checks.output")}</summary>
           <pre>{result.output}</pre>
         </details>
       )}
