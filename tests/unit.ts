@@ -1,6 +1,7 @@
 // Unit tests for the YAML text edits, against the repos' own files
 // (`npm run bundle` first). Run with `npm run test:unit`.
 import fs from "node:fs";
+import { describePath, explain } from "../src/findings";
 import { LISTS } from "../src/lists";
 import { child, kindOf, resolve, schemaAt, unresolved, type Located } from "../src/schema";
 import { appendItem, getItem, readYaml, removeItem, updateItem, type Item } from "../src/yamlEdit";
@@ -154,6 +155,44 @@ const topKinds = LISTS.map((def) => {
 });
 check(topKinds.every((k) => k === "object"), `every list entry's schema is a form (${LISTS.length} lists)${topKinds.some((k) => k !== "object") ? `: not ${LISTS.filter((_, i) => topKinds[i] !== "object").map((d) => d.key).join(", ")}` : ""}`);
 check(unresolved.size === 0, `every $ref in their ${fields} fields resolves${unresolved.size ? `: ${[...unresolved].join("; ")}` : ""}`);
+
+// ---- Findings in project language ----
+// tests/findings-corpus.json: one real finding per kind, collected by scripts/collect-findings.py.
+const corpus: string[] = JSON.parse(fs.readFileSync("tests/findings-corpus.json", "utf8"));
+const untranslated = corpus.filter((line) => !explain(line).translated);
+check(untranslated.length === 0, `every kind of finding in the corpus is translated (${corpus.length - untranslated.length}/${corpus.length})${untranslated.length ? `:\n    ${untranslated.slice(0, 10).join("\n    ")}` : ""}`);
+const english = corpus.filter((line) => / (is|are|not|found|missing|must|has|does) /.test(explain(line).text));
+check(english.length === 0, `no translated finding keeps English phrasing${english.length ? `:\n    ${english.slice(0, 5).map((l) => explain(l).text).join("\n    ")}` : ""}`);
+const example = explain(
+  "MasterData-as-Code/customers/example_customer/categories/beverages/structure/items.yaml: item 'ITEM_003': storage_condition 'frozen_xyz' not found in elements/storage_conditions.yaml",
+);
+check(
+  example.location === "Stammdaten · example_customer · Kategorie beverages · Artikelstamm" &&
+    example.subject === "Artikel ITEM_003" &&
+    example.text === "Lagerbedingung „frozen_xyz“ ist im Katalog „storage_conditions“ nicht vorhanden.",
+  `a catalog reference reads in project language (${JSON.stringify(example)})`,
+);
+const schema = explain("Topology-as-Code/customers/example_customer/facilities/facility_pa11/buildings/hall_3/structure/storage.yaml: storage_types[0].routing: 'aisles' is a required property");
+check(schema.location === "Topologie · example_customer · PA11 · Halle 3 · Lagerstruktur" && schema.text.endsWith("Pflichtfeld „aisles“ fehlt."), `a schema finding names the field (${schema.text})`);
+check(describePath("Warehouse-as-Code/sites/example_customer/pa11.yaml") === "Standorte · example_customer · Standort PA11", "a site manifest is named by its site");
+// Findings the corpus cannot produce (rules that compare two fields), in the tools' own wording.
+const fromSource = [
+  "MasterData-as-Code/customers/c/categories/k/structure/items.yaml: item 'ITEM_003': tracking.expiry.min_remaining_at_receipt_days (60) exceeds total_shelf_life_days (20) - no delivery could ever be accepted",
+  "MasterData-as-Code/customers/c/categories/k/structure/packaging.yaml: packaging 'ITEM_001' uom_hierarchy[0]: GTIN '4006381333931' has a wrong check digit",
+  "MasterData-as-Code/customers/c/categories/k/structure/items.yaml: item 'ITEM_001': owner 'acme' not declared in company.yaml owners",
+  "Allocation-as-Code/customers/c/facilities/f/buildings/b/strategies/fixed_bin_assignments.yaml: fixed_bin_assignments[0] (ITEM_001 @ FIX.FIX-01-01): min_qty (10) exceeds max_qty (5)",
+  "Allocation-as-Code/customers/c/facilities/f/buildings/b/strategies/putaway_rules.yaml: putaway_rule 'PUT_A' steps[1]: zone 'HBR' already covered by steps[0] for the same load unit types and constraints - this step is unreachable",
+  "Allocation-as-Code/customers/c/facilities/f/buildings/b/strategies/putaway_rules.yaml: putaway_rule 'PUT_A' steps[0]: zone 'RACK' is reserved for owners owner_alpha but the rule has no applies_to.owner",
+  "OrderOrchestration-as-Code/customers/c/channels/w/order_types/t/strategies/completion_rules.yaml: completion_rule 'C1': action.supersedes_parent is true but structure/status.yaml has no 'superseded' status",
+  "Topology-as-Code/customers/c/facilities/f/buildings/b/structure/storage.yaml: storage_type 'HBR': automation_level 'conveyor_automated' implies movement_policy 'explicit_only', found 'default_allow'",
+  "Topology-as-Code/customers/c/facilities/f/buildings/b/structure/storage.yaml: storage_type 'HBR' aisle 1 bay 2: shelf_max_weight 900 kg exceeds bay_max_weight 800 kg",
+  "Topology-as-Code/customers/c/facilities/f/buildings/b/structure/storage.yaml: door 'DOOR_01': staging_section 'STAGING.SEC_X': section 'SEC_X' not found in storage_type 'STAGING'",
+  "Topology-as-Code/customers/c/facilities/f/buildings/b/warehouse.yaml: File is empty or invalid.",
+];
+const sourceMisses = fromSource.filter((line) => !explain(line).translated || / (is|are|not|found|must|has|exceeds) /.test(explain(line).text));
+check(sourceMisses.length === 0, `findings from rules that compare fields are translated${sourceMisses.length ? `:\n    ${sourceMisses.map((l) => explain(l).text).join("\n    ")}` : ""}`);
+const unknown = explain("customers/x/company.yaml: something entirely new happened");
+check(!unknown.translated && unknown.text === "something entirely new happened" && unknown.location === "x · Firma", "an unknown finding keeps its text, with a readable location");
 
 console.log(failures.length ? `\n${failures.length} failure(s)` : "\nall unit checks passed");
 process.exit(failures.length ? 1 : 0);

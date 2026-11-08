@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FindingList } from "./FindingList";
 import { ChangesView, type ChangedFile } from "./Changes";
 import { ChecksView } from "./Checks";
 import { DataView, type FileChange, type Focus } from "./DataView";
@@ -418,8 +419,8 @@ function Validation({ checks }: { checks: CheckResult[] }) {
       {errors.length
         ? `Nach der Änderung meldet validate.py ${errors.length} Fehler:`
         : `Nach der Änderung: validate.py ohne Fehler (${checks.map((c) => c.id).join(", ")}).`}
-      {errors.length > 0 && <ul className="findings">{errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
-      {warnings.length > 0 && <ul className="findings warnings">{warnings.map((w, i) => <li key={i}>Hinweis: {w}</li>)}</ul>}
+      <FindingList items={errors} />
+      <FindingList items={warnings} warnings />
     </div>
   );
 }

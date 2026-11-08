@@ -209,3 +209,12 @@ code.readonly { padding: 4px 0; }
 .flow-status { --kind: #8a94a3; border-radius: 22px; border-left-width: 1.5px; }
 .topo-node.terminal { border-width: 3px; border-style: double; }
 .workflow .react-flow__handle { opacity: 0; }
+
+/* Findings in project language */
+.finding { margin: 2px 0; }
+.f-location { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 8px; background: var(--border); color: var(--text); font-size: 12px; }
+.f-subject { margin-right: 6px; }
+.f-original { display: inline-block; margin: 0 0 0 6px; }
+.f-original summary { display: inline; font-size: 11px; }
+.f-original[open] { display: block; }
+.f-original code { display: block; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; white-space: pre-wrap; }

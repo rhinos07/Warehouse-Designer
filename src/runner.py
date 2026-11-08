@@ -173,11 +173,12 @@ def compile_buildings():
 def run_check(check):
     started = time.perf_counter()
     code, output = run_script(check["script"], check["argv"], cwd=check["cwd"])
+    output = output.replace(f"{ROOT}/", "")  # paths as in the repos: Topology-as-Code/customers/...
     errors, warnings = findings(output)
     if code != 0 and not errors:
         errors = [line for line in output.strip().splitlines()[-3:]] or [f"exit code {code}"]
     return {
         "id": check["id"], "repo": check["repo"], "title": check["title"],
         "ok": code == 0, "errors": errors, "warnings": warnings,
-        "output": output.replace(f"{ROOT}/", ""), "ms": round((time.perf_counter() - started) * 1000),
+        "output": output, "ms": round((time.perf_counter() - started) * 1000),
     }

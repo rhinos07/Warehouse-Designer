@@ -66,6 +66,17 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   rules, statuses, transitions, shortage policy and fields of an order type
   are edited. Each change is validated with OrderOrchestration's
   `validate.py`; rules with findings are marked in the diagram.
+- **Findings in project language.** The tools report in English, with file
+  paths and schema terms. The page shows each finding as a German sentence:
+  - **where:** area, customer, site, hall and what the file holds;
+  - **what:** e.g. "Artikel ITEM_003";
+  - **why:** what is wrong.
+
+  The tool's original line stays one click away. `src/findings.ts` holds
+  the patterns. `tests/findings-corpus.json` holds one real finding of every
+  kind the tools produce on broken example data (698 kinds, collected with
+  `scripts/collect-findings.py`); the unit test requires all of them to be
+  translated.
 - **Review and save:** unsaved edits are listed with a diff per file.
   - "In Ordner speichern" writes them back into the opened folder (Edge and
     Chrome). It refuses if a file changed on disk in the meantime.

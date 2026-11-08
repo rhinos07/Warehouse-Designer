@@ -1,3 +1,4 @@
+import { FindingList } from "./FindingList";
 import {
   Background,
   Controls,
@@ -354,7 +355,7 @@ function Details({ node, building, graph, findings, children }: {
       {findings.length > 0 && (
         <>
           <h4>Befunde aus der Prüfung</h4>
-          <ul className="findings">{findings.map((f, i) => <li key={i}>{f}</li>)}</ul>
+          <FindingList items={findings} />
         </>
       )}
       {node.entity && <Attributes entity={node.entity} />}
