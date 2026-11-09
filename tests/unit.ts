@@ -282,6 +282,16 @@ check(!aml.xml.includes("R1") && !aml.xml.includes('Name="WC_01" ID="' + stableI
 check(aml.xml.includes('<Attribute Name="max_weight" Unit="kg" AttributeDataType="xs:double">') && aml.xml.includes('<Attribute Name="depth" AttributeDataType="xs:int">'),
   "measures keep their unit, integers their type");
 check(/<InternalElement Name="HBR\.SEC_A"[^>]*>[\s\S]*?<InternalElement Name="HBR\.A-01"/.test(aml.xml), "a storage point is nested in its section");
+const slim = toAutomationML(
+  { ...amlHall, point_counts: { HBR: 2 }, points: [...amlHall.points!, { id: "HBR.A-02", storage_type: "HBR", section: "HBR.SEC_A" }],
+    entities: { ...amlHall.entities, can_edge: [...amlHall.entities!.can_edge, { id: "e6", from: "DOOR_01", to: "HBR.A-02", source_type: "connection", source_id: "C3", transport_mode: "walking" }] } },
+  { now: "2026-11-09T10:00:00Z", points: false },
+);
+check(slim.fileName === "c_F1_hall_1_without_storage_points.aml", `without storage points the file says so in its name (${slim.fileName})`);
+check(!slim.xml.includes('Name="HBR.A-01"') && slim.xml.includes('Name="HBR.A-02"') && slim.counts.points === 1,
+  "without storage points only those a connection ends at stay");
+check(/<Attribute Name="storage_point_count" AttributeDataType="xs:int">\s*<Value>2<\/Value>/.test(slim.xml), "a storage type then states how many storage points it has");
+check(aml.counts.points === 1 && !aml.xml.includes("storage_point_count"), "with storage points every one is exported and no count is added");
 check(aml.xml.indexOf("<SystemUnitClassLib") < aml.xml.indexOf("<AttributeTypeLib") && aml.xml.indexOf("<RoleClassLib") < aml.xml.indexOf("<SystemUnitClassLib"),
   "libraries come in the order CAEX 3.0 requires");
 

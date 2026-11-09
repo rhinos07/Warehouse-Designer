@@ -135,6 +135,7 @@ button.danger { background: transparent; color: var(--bad); border-color: var(--
 .topology.editing .react-flow__handle { opacity: 1; width: 10px; height: 10px; background: var(--accent); border: 2px solid var(--surface); }
 .topology.editing .react-flow__edge { cursor: pointer; }
 .topo-toolbar .actions button { padding: 4px 10px; }
+.aml-export { display: flex; align-items: center; gap: 10px; }
 .edit-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 10px 0; }
 .edit-form h3 { margin-bottom: 8px; }
 .edit-form p { margin: 6px 0; }

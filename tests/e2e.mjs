@@ -185,6 +185,15 @@ async function editTests(browser) {
   check((xml.match(/<InternalElement Name="HBR\.[^"]+"/g) ?? []).length > 100, "storage points are exported one by one");
   check(/Bewegungsregeln sind nicht enthalten/.test(await page.locator("[data-aml-result]").textContent()), "the page says what the export leaves out");
 
+  await page.getByLabel("ohne Lagerplätze").check();
+  const [slimDownload] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "AutomationML exportieren" }).click()]);
+  const slim = fs.readFileSync(await slimDownload.path(), "utf8");
+  const slimProblems = await page.evaluate(amlProblems, slim);
+  check(slimDownload.suggestedFilename() === "example_customer_PA11_hall_3_without_storage_points.aml" && slimProblems.length === 0,
+    `"ohne Lagerplätze" gives a valid file of its own name${slimProblems.length ? `: ${slimProblems.slice(0, 5).join("; ")}` : ""}`);
+  check(slim.length * 10 < xml.length && slim.includes('<InternalElement Name="DOOR_04"') && slim.includes('Name="storage_point_count"'),
+    `without storage points the file is a tenth of the size or less (${Math.round(slim.length / 1024)} vs. ${Math.round(xml.length / 1024)} KB) and keeps the rest`);
+
   const diff = await page.locator("[data-changes]").textContent();
   check(diff.includes("4 ungespeicherte Änderungen in 3 Dateien"), "the changes panel counts edits and files");
   for (const text of ['- id: "DOOR_04"', '- id: "MAN_DOOR_04_TO_STAGING"', 'expected_duration: {value: 3, unit: "min"}', '- id: "WC_QUALITY_CHECK_01"', '- id: "RP_01"']) {

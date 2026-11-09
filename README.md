@@ -109,6 +109,11 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   - movement rules, because AutomationML has no place for rules;
   - the aisle, bay and shelf level.
 
+  "ohne Lagerplätze" leaves out the individual storage points. Each storage
+  type then states only how many it has (`storage_point_count`). Storage
+  points a connection ends at stay in, so every link keeps both ends. Hall 3
+  shrinks from about 3 MB to about 65 KB.
+
   Ids are derived from the data, so exporting the same data twice gives the
   same file. The example halls' exports were checked against the official
   CAEX 3.0 XSD (see [`docs/concept.md`](docs/concept.md)).

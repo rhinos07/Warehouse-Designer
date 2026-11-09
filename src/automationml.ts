@@ -11,7 +11,9 @@
 // each place; activity areas as groups of mirror objects; templates (equipment
 // types, workstation and lane templates) as system unit classes. Not exported:
 // movement rules - AutomationML has no place for rules - and the aisle, bay and
-// shelf level inside a storage type.
+// shelf level inside a storage type. With `points: false` storage points are
+// left out (a storage type then states how many it has), except those a
+// connection ends at, so that every link still has both ends.
 //
 // Ids are derived from the building and the as-code id, not random: exporting
 // the same data again gives the same file, so two exports can be compared.
@@ -210,14 +212,20 @@ export interface AmlExport {
   xml: string;
   fileName: string;
   /** What went in, for the page to show. */
-  counts: { elements: number; connections: number; links: number; mirrors: number; templates: number };
+  counts: { elements: number; points: number; connections: number; links: number; mirrors: number; templates: number };
   /** References that could not be exported, e.g. a connection to an unknown place. */
   skipped: string[];
 }
 
 export function toAutomationML(
   building: Building,
-  options: { now?: string; version?: string; catalog?: Catalog } = {},
+  options: {
+    now?: string;
+    version?: string;
+    catalog?: Catalog;
+    /** false: leave storage points out, except those a connection ends at. Default true. */
+    points?: boolean;
+  } = {},
 ): AmlExport {
   const entities = building.entities ?? {};
   const list = (kind: string) => entities[kind] ?? [];
@@ -225,7 +233,9 @@ export function toAutomationML(
   const make = (role: Role | undefined, kind: string, entity: { id: string } & Record<string, unknown>, skip: string[] = []): Element => ({
     name: entity.id, id: stableId(scope, kind, entity.id), role, attrs: attributes(entity, skip), ports: [], children: [], links: [],
   });
-  const counts = { elements: 0, connections: 0, links: 0, mirrors: 0, templates: 0 };
+  const counts = { elements: 0, points: 0, connections: 0, links: 0, mirrors: 0, templates: 0 };
+  const withPoints = options.points !== false;
+  const connected = new Set(list("can_edge").flatMap((edge) => [String(edge.from), String(edge.to)]));
   const skipped: string[] = [];
 
   // Templates, by family; an element refers to one as its system unit class.
@@ -252,15 +262,20 @@ export function toAutomationML(
     return e;
   };
 
-  for (const type of list("storage_type")) add(hall, make("StorageType", "storage_type", type));
+  for (const type of list("storage_type")) {
+    const e = add(hall, make("StorageType", "storage_type", type));
+    if (!withPoints) e.attrs.push(attribute("storage_point_count", building.point_counts?.[type.id] ?? 0)!);
+  }
   for (const section of list("section")) {
     const parent = places.get(String(section.storage_type)) ?? hall;
     add(parent, make("Section", "section", section, ["storage_type", "local_id"]));
   }
   for (const point of building.points ?? []) {
     if (point.ref_kind) continue; // a work center or reporting point, exported as that
+    if (!withPoints && !connected.has(point.id)) continue;
     const parent = places.get(String(point.section ?? "")) ?? places.get(String(point.storage_type ?? "")) ?? hall;
     add(parent, make("StoragePoint", "storage_point", point, ["storage_type", "section"]));
+    counts.points++;
   }
   for (const door of list("door")) add(hall, make("Door", "door", door));
   for (const wc of list("work_center")) {
@@ -342,7 +357,8 @@ export function toAutomationML(
 
   hall.description =
     `Compiled from Topology-as-Code ${building.path} with its tools/compile.py. ` +
-    "Movement rules are not exported: AutomationML has no place for rules. Not exported either: the aisle, bay and shelf level of storage types.";
+    "Movement rules are not exported: AutomationML has no place for rules. Not exported either: the aisle, bay and shelf level of storage types." +
+    (withPoints ? "" : " Storage points are left out, except those a connection ends at; each storage type states its storage_point_count.");
 
   const roleLib: XmlNode = {
     tag: "RoleClassLib",
@@ -380,7 +396,8 @@ export function toAutomationML(
     ],
   };
 
-  const fileName = `${[building.customer, building.facility, building.building].filter(Boolean).join("_") || "building"}.aml`;
+  const base = [building.customer, building.facility, building.building].filter(Boolean).join("_") || "building";
+  const fileName = `${base}${withPoints ? "" : "_without_storage_points"}.aml`;
   const now = options.now ?? new Date().toISOString();
   const file: XmlNode = {
     tag: "CAEXFile",
