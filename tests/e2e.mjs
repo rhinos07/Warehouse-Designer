@@ -13,6 +13,12 @@
 //    validate.py and flagged in the diagram.
 // 9. The language switch: English for an English browser, German on a
 //    click, kept across a reload; findings in the tools' own English.
+// 10. AutomationML export of an edited hall: the new elements are in it, and
+//     every reference in the file resolves (checked with the browser's XML parser).
+// 11. AutomationML import: this page's export of the AutoStore hall comes back
+//     as a new hall that passes validate.py and is saved into the folder; a
+//     planner's file with standard roles becomes a skeleton; undo removes an
+//     import in one step.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -79,6 +85,44 @@ async function editAndValidate(page, action) {
   return page.locator("[data-validation]").getAttribute("data-validation");
 }
 
+/** Problems of a CAEX file: XML errors, duplicate ids, links to missing ports, unknown roles. Runs in the page. */
+function amlProblems(xml) {
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  if (doc.querySelector("parsererror")) return ["not well-formed XML"];
+  const problems = [];
+  const ids = new Map();
+  for (const e of doc.querySelectorAll("[ID]")) {
+    if (ids.has(e.getAttribute("ID"))) problems.push(`duplicate ID ${e.getAttribute("ID")}`);
+    ids.set(e.getAttribute("ID"), e);
+  }
+  const classes = new Set();
+  const walk = (node, prefix) => {
+    for (const c of node.children) {
+      if (["RoleClass", "InterfaceClass", "SystemUnitClass", "AttributeType"].includes(c.localName)) {
+        classes.add(`${prefix}/${c.getAttribute("Name")}`);
+        walk(c, `${prefix}/${c.getAttribute("Name")}`);
+      }
+    }
+  };
+  for (const lib of doc.documentElement.children) if (lib.localName.endsWith("Lib")) walk(lib, lib.getAttribute("Name"));
+  for (const e of doc.querySelectorAll("RoleRequirements, SupportedRoleClass, ExternalInterface")) {
+    const ref = e.getAttribute("RefBaseRoleClassPath") ?? e.getAttribute("RefRoleClassPath") ?? e.getAttribute("RefBaseClassPath");
+    if (!classes.has(ref)) problems.push(`unknown class ${ref}`);
+  }
+  for (const e of doc.querySelectorAll("InternalElement[RefBaseSystemUnitPath]")) {
+    const ref = e.getAttribute("RefBaseSystemUnitPath");
+    if (!classes.has(ref) && !ids.has(ref)) problems.push(`unknown system unit or master ${ref}`);
+  }
+  for (const link of doc.querySelectorAll("InternalLink")) {
+    for (const side of ["RefPartnerSideA", "RefPartnerSideB"]) {
+      const [owner, ...name] = link.getAttribute(side).split(":");
+      const ports = [...(ids.get(owner)?.children ?? [])].filter((c) => c.localName === "ExternalInterface").map((c) => c.getAttribute("Name"));
+      if (!ports.includes(name.join(":"))) problems.push(`link ${link.getAttribute("Name")}: no port ${link.getAttribute(side)}`);
+    }
+  }
+  return problems;
+}
+
 async function openHall(page, hall) {
   await page.getByRole("tab", { name: "Topologie" }).click();
   const select = page.locator(".topo-toolbar select");
@@ -134,6 +178,26 @@ async function editTests(browser) {
   });
   check(state === "ok" && (await page.locator('[data-node="RP_01"]').isVisible()), "a new reporting point passes validate.py");
 
+  // AutomationML export of the edited hall.
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "AutomationML exportieren" }).click()]);
+  const xml = fs.readFileSync(await download.path(), "utf8");
+  check(download.suggestedFilename() === "example_customer_PA11_hall_3.aml", `the export is named after the hall (${download.suggestedFilename()})`);
+  const problems = await page.evaluate(amlProblems, xml);
+  check(problems.length === 0, `the AutomationML file is well-formed and every reference in it resolves${problems.length ? `: ${problems.slice(0, 5).join("; ")}` : ""}`);
+  check(xml.includes('<InternalElement Name="DOOR_04"') && xml.includes('<InternalElement Name="MAN_DOOR_04_TO_STAGING"') && xml.includes('<InternalElement Name="WC_QUALITY_CHECK_01"'),
+    "the export contains the unsaved new door, connection and work center");
+  check((xml.match(/<InternalElement Name="HBR\.[^"]+"/g) ?? []).length > 100, "storage points are exported one by one");
+  check(/Bewegungsregeln sind nicht enthalten/.test(await page.locator("[data-aml-result]").textContent()), "the page says what the export leaves out");
+
+  await page.getByLabel("ohne Lagerplätze").check();
+  const [slimDownload] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "AutomationML exportieren" }).click()]);
+  const slim = fs.readFileSync(await slimDownload.path(), "utf8");
+  const slimProblems = await page.evaluate(amlProblems, slim);
+  check(slimDownload.suggestedFilename() === "example_customer_PA11_hall_3_without_storage_points.aml" && slimProblems.length === 0,
+    `"ohne Lagerplätze" gives a valid file of its own name${slimProblems.length ? `: ${slimProblems.slice(0, 5).join("; ")}` : ""}`);
+  check(slim.length * 10 < xml.length && slim.includes('<InternalElement Name="DOOR_04"') && slim.includes('Name="storage_point_count"'),
+    `without storage points the file is a tenth of the size or less (${Math.round(slim.length / 1024)} vs. ${Math.round(xml.length / 1024)} KB) and keeps the rest`);
+
   const diff = await page.locator("[data-changes]").textContent();
   check(diff.includes("4 ungespeicherte Änderungen in 3 Dateien"), "the changes panel counts edits and files");
   for (const text of ['- id: "DOOR_04"', '- id: "MAN_DOOR_04_TO_STAGING"', 'expected_duration: {value: 3, unit: "min"}', '- id: "WC_QUALITY_CHECK_01"', '- id: "RP_01"']) {
@@ -185,8 +249,8 @@ function fakeFolder(files) {
       }
     },
     getDirectoryHandle: async (n) => dirHandle(`${prefix}${n}/`, n),
-    getFileHandle: async (n) => {
-      if (!(`${prefix}${n}` in window.__fs)) throw new DOMException("not found", "NotFoundError");
+    getFileHandle: async (n, options) => {
+      if (!options?.create && !(`${prefix}${n}` in window.__fs)) throw new DOMException("not found", "NotFoundError");
       return fileHandle(`${prefix}${n}`);
     },
     queryPermission: async () => "prompt",
@@ -231,6 +295,59 @@ async function saveTests(browser) {
   await page.getByText("wurde inzwischen außerhalb geändert").waitFor({ timeout: TIMEOUT });
   check(!(await page.evaluate((p) => window.__fs[p], storage)).includes("DOOR_05"), "a file changed on disk meanwhile is not overwritten");
   check(await page.locator("[data-changes]").isVisible(), "the refused edit stays pending");
+  await page.close();
+}
+
+async function importTests(browser) {
+  const files = Object.fromEntries(Object.entries(specs.repos["Topology-as-Code"].files).filter(([p]) => p.startsWith("customers/")));
+  const facility = "customers/autostore_customer/facilities/facility_as01/facility.yaml";
+  const hall2 = "customers/autostore_customer/facilities/facility_as01/buildings/hall_2";
+  const page = await browser.newPage({ locale: "de-DE" });
+  await page.addInitScript(fakeFolder, files);
+  page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
+  await page.goto(URL);
+  const open = page.getByRole("button", { name: "Ordner öffnen …" });
+  await page.waitForFunction((b) => !b.disabled, await open.elementHandle(), { timeout: TIMEOUT });
+  await open.click();
+  await page.locator("[data-source]", { hasText: "Topology-as-Code" }).waitFor();
+  await openHall(page, "/ AS01 /");
+  await page.locator('[data-node="WC_PORT_01"]').waitFor({ state: "visible", timeout: TIMEOUT });
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "AutomationML exportieren" }).click()]);
+  const exported = await download.path();
+
+  await page.locator("[data-aml-import-file]").setInputFiles({ name: "autostore.aml", mimeType: "application/xml", buffer: fs.readFileSync(exported) });
+  await page.locator("[data-aml-import]").waitFor({ timeout: 10_000 });
+  check((await page.getByLabel("Hallen-Id (Ordnername)").inputValue()) === "hall_2", "the import proposes the next free hall id, hall_2");
+  check((await page.getByLabel("Standort").inputValue()) === facility, "the import picks the facility the file names (AS01)");
+  check(/1 × Lagertyp.*6 × Arbeitsplatz.*4 × Meldepunkt/.test(await page.locator("[data-import-counts]").textContent()), "the preview counts what will be created");
+  let state = await editAndValidate(page, () => page.getByRole("button", { name: "Halle anlegen" }).click());
+  check(state === "ok", "this page's own export, imported as a new hall, passes validate.py");
+  check((await page.locator(".topo-toolbar select").inputValue()) === `${hall2}/warehouse.yaml`, "the diagram switches to the new hall");
+  check(await page.locator('[data-node="WC_PORT_01"]').isVisible() && await page.locator('[data-node="AUTOSTORE_GRID"]').isVisible(), "the new hall's places are in the diagram");
+  check(await page.locator(`[data-file="Topology-as-Code/${hall2}/structure/storage.yaml"] .tag`).isVisible(), "the changes list the new files as new");
+  check((await page.locator("[data-changes] .change-log li").count()) === 1, "an import is one entry in the change log");
+
+  await page.getByRole("button", { name: "In Ordner speichern" }).click();
+  await page.locator("[data-saved]").waitFor({ timeout: TIMEOUT });
+  const disk = await page.evaluate(() => window.__fs);
+  check(["warehouse.yaml", "structure/storage.yaml", "structure/wcs.yaml", "structure/lanes.yaml"].every((f) => disk[`${hall2}/${f}`]?.includes("imported from autostore.aml")),
+    "saving writes the new hall's files into the folder");
+  check(disk[facility].includes('- "buildings/hall_2/warehouse.yaml"') && disk[facility].startsWith(files[facility].slice(0, files[facility].indexOf("buildings/hall_1"))),
+    "saving adds the hall to facility.yaml and keeps the rest of it");
+
+  await page.locator("[data-aml-import-file]").setInputFiles("tests/fixtures/layout-planner.aml");
+  await page.locator("[data-aml-import]").waitFor({ timeout: 10_000 });
+  check((await page.getByLabel("Hallen-Id (Ordnername)").inputValue()) === "halle_7", "a planner's area name becomes the proposed hall id");
+  check((await page.getByLabel("Feuerlöscher 3 übernehmen als").inputValue()) === "ignore" && (await page.getByLabel("Tor 1 übernehmen als").inputValue()) === "door",
+    "elements without a known role are proposed as not taken over; a Gate becomes a door");
+  check(/staging_section/.test(await page.locator(".import-notes").textContent()), "the preview says the door's staging section is missing");
+  state = await editAndValidate(page, () => page.getByRole("button", { name: "Halle anlegen" }).click());
+  check(state === "failed", "the planner's skeleton is checked at once, and fails on what the file could not give");
+  check(await page.locator('[data-node="HOCHREGAL_1"]').isVisible() && await page.locator('[data-node="TOR_1"]').isVisible(), "the skeleton's places are in the diagram");
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await page.locator("[data-changes]").waitFor({ state: "detached", timeout: TIMEOUT });
+  await waitForCompile(page);
+  check(!(await page.locator(".topo-toolbar select option").allTextContents()).some((o) => o.includes("Halle 7")), "undo removes the whole import in one step");
   await page.close();
 }
 
@@ -452,7 +569,7 @@ try {
     'condition: "storage_technology_split"',
     'condition: "no_such_reason"',
   );
-  await page.locator('input[type="file"]').setInputFiles(folder);
+  await page.locator("[data-folder-input]").setInputFiles(folder);
   await page.locator("[data-source]", { hasText: "OrderOrchestration-as-Code" }).waitFor();
   await page.getByText("Der Ordner enthält keine Topology-as-Code-Daten.").waitFor({ timeout: TIMEOUT });
   check(true, "the topology tab says the folder has no topology data");
@@ -475,7 +592,7 @@ try {
     'entity_type: "storage_type"\n      entity_id: "HBR"',
     'entity_type: "door"\n      entity_id: "HBR"',
   );
-  await page.locator('input[type="file"]').setInputFiles(topology);
+  await page.locator("[data-folder-input]").setInputFiles(topology);
   // Reading the folder is asynchronous: wait until the page shows it as the data source.
   await page.locator("[data-source]", { hasText: "Topology-as-Code" }).waitFor();
   await page.getByRole("button", { name: "Prüfung starten" }).click();
@@ -490,6 +607,7 @@ try {
 
   await editTests(browser);
   await saveTests(browser);
+  await importTests(browser);
   await dataTests(browser);
   await workflowTests(browser);
   await languageTests(browser);

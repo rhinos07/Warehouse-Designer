@@ -12,12 +12,15 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { readAml, type AmlModel } from "./amlImport";
+import { AmlImport, type CreatedBuilding } from "./AmlImportPanel";
+import { toAutomationML } from "./automationml";
 import { EditPanel, type Form } from "./EditPanel";
 import { EditError, ENDPOINT_KINDS, HOME, removeLink, removeNode, usages, type Change, type Files } from "./editor";
 import { buildGraph, findingsFor, kindLabel, modeLabel, MODES, subtitle, type NodeKind, type TopoEdge, type TopoNode } from "./graph";
 import { t, tl, useLang } from "./i18n";
-import type { Building, Entity } from "./types";
+import type { Building, Catalog, Entity } from "./types";
 
 const EDGE_COLOR: Record<string, string> = {
   conveyor: "#2f6fdb",
@@ -53,14 +56,18 @@ function TopoNodeView({ data, selected }: NodeProps<Node<TopoNodeData>>) {
 }
 const nodeTypes = { topo: TopoNodeView };
 
-export function TopologyView({ buildings, findings, files, onChange, onOpen, busy = false }: {
+export function TopologyView({ buildings, findings, files, onChange, onCreate, onOpen, catalog, busy = false }: {
   buildings: Building[];
   findings: string[];
   /** Topology-as-Code files by repo path; with onChange, the diagram can be edited. */
   files?: Files;
   onChange?: (change: Change) => void;
+  /** Adds the files of a new building, e.g. from an AutomationML import. */
+  onCreate?: (created: CreatedBuilding) => void;
   /** Opens an element's entry in the data tab's form. */
   onOpen?: (target: { path: string; key: string; id: string }) => void;
+  /** The page's catalogs: template attributes for the AutomationML export. */
+  catalog?: Catalog;
   busy?: boolean;
 }) {
   const [path, setPath] = useState(() => (buildings.find((b) => b.ok) ?? buildings[0])?.path);
@@ -70,6 +77,10 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [form, setForm] = useState<Form | null>(null);
   const [error, setError] = useState("");
+  const [exported, setExported] = useState("");
+  const [withPoints, setWithPoints] = useState(true);
+  const [importing, setImporting] = useState<{ model: AmlModel; fileName: string } | null>(null);
+  const importInput = useRef<HTMLInputElement>(null);
   const building = buildings.find((b) => b.path === path) ?? buildings[0];
   const graph = useMemo(() => (building?.ok ? buildGraph(building) : null), [building]);
   const [flow, setFlow] = useState<ReactFlowInstance<Node<TopoNodeData>> | null>(null);
@@ -83,6 +94,41 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
   }, [flow, nodeCount]);
   const canEdit = Boolean(files && onChange && building?.ok && building.sources);
   const edit = editing && canEdit;
+
+  /** Downloads the building, as compiled now (with unsaved edits), as an AutomationML file. */
+  function exportAml() {
+    const result = toAutomationML(building, { catalog, points: withPoints });
+    const url = URL.createObjectURL(new Blob([result.xml], { type: "application/xml" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = result.fileName;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const { elements, points, connections, links, mirrors, templates } = result.counts;
+    setExported(
+      [
+        t("topology.amlDone", { file: result.fileName, elements, points, connections, links, mirrors, templates }),
+        result.skipped.length ? t("topology.amlSkipped", { refs: result.skipped.join(", ") }) : "",
+      ].filter(Boolean).join(" "),
+    );
+  }
+
+  /** Reads an AutomationML file and opens the import preview. */
+  async function readImport(file: File | undefined) {
+    if (!file) return;
+    try {
+      const model = readAml(await file.text());
+      if (!model.elements.length) throw new Error(t("import.empty"));
+      setImporting({ model, fileName: file.name });
+      setError("");
+    } catch (e) {
+      setError(t("import.readError", { error: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      if (importInput.current) importInput.current.value = "";
+    }
+  }
 
   function select(node: string | null, edge: string | null = null) {
     setSelectedId(node);
@@ -211,6 +257,7 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
             value={building.path}
             onChange={(e) => {
               setPath(e.target.value);
+              setExported("");
               select(null);
             }}
           >
@@ -244,7 +291,41 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
             <button className="secondary" onClick={() => setForm({ type: "reporting_point" })} disabled={busy}>{t("topology.addReportingPoint")}</button>
           </div>
         )}
+        {building.ok && (
+          <div className="aml-export">
+            <button className="secondary" onClick={exportAml} disabled={busy} title={t("topology.amlHint")} data-aml-export>
+              {t("topology.amlExport")}
+            </button>
+            <label title={t("topology.amlNoPointsHint")}>
+              <input type="checkbox" checked={!withPoints} onChange={(e) => setWithPoints(!e.target.checked)} /> {t("topology.amlNoPoints")}
+            </label>
+          </div>
+        )}
+        {files && onCreate && (
+          <>
+            <button className="secondary" onClick={() => importInput.current?.click()} disabled={busy} title={t("topology.amlImportHint")}>
+              {t("topology.amlImport")}
+            </button>
+            <input ref={importInput} type="file" accept=".aml,.xml" hidden data-aml-import-file onChange={(e) => readImport(e.target.files?.[0])} />
+          </>
+        )}
       </div>
+      {exported && <p className="hint" data-aml-result>{exported}</p>}
+      {importing && files && onCreate && catalog && (
+        <AmlImport
+          model={importing.model}
+          fileName={importing.fileName}
+          files={files}
+          catalog={catalog}
+          onCancel={() => setImporting(null)}
+          onCreate={(created) => {
+            onCreate(created);
+            setImporting(null);
+            setPath(created.warehousePath);
+            select(null);
+          }}
+        />
+      )}
 
       {!building.ok && (
         <div className="status error">

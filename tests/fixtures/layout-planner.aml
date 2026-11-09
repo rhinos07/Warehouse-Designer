@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A small layout as a plant planning tool might write it: standard AutomationML
+     roles, free names, places joined straight or through a conveyor element.
+     Hand-written test data for the Warehouse Designer's import. -->
+<CAEXFile SchemaVersion="3.0" FileName="layout-planner.aml" xmlns="http://www.dke.de/CAEX" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <SuperiorStandardVersion>AutomationML 2.10</SuperiorStandardVersion>
+  <SourceDocumentInformation OriginName="Layout planner" OriginID="0" OriginVersion="1.0" LastWritingDateTime="2026-11-09T10:00:00Z" />
+  <InstanceHierarchy Name="Layout">
+    <InternalElement Name="AS01" ID="{site}">
+      <InternalElement Name="Halle 7" ID="{area}">
+        <Attribute Name="name" AttributeDataType="xs:string"><Value>Halle 7 &amp; Anbau</Value></Attribute>
+        <InternalElement Name="Hochregal 1" ID="{rack}">
+          <Attribute Name="technology" AttributeDataType="xs:string"><Value>shuttle</Value></Attribute>
+          <Attribute Name="height" AttributeDataType="xs:double" Unit="m"><Value>12.5</Value></Attribute>
+          <ExternalInterface Name="Anschluss" ID="{rack-port}" RefBaseClassPath="AutomationMLInterfaceClassLib/AutomationMLBaseInterface/Port" />
+          <InternalElement Name="Fach 01" ID="{bin-1}">
+            <Attribute Name="max_weight" AttributeDataType="xs:double" Unit="kg"><Value>800</Value></Attribute>
+            <RoleRequirements RefBaseRoleClassPath="AutomationMLExtendedRoleClassLib/StorageUnit" />
+          </InternalElement>
+          <InternalElement Name="Fach 02" ID="{bin-2}">
+            <RoleRequirements RefBaseRoleClassPath="AutomationMLExtendedRoleClassLib/StorageUnit" />
+          </InternalElement>
+          <RoleRequirements RefBaseRoleClassPath="AutomationMLDMIRoleClassLib/DMIRoleClassLib/Storage" />
+        </InternalElement>
+        <InternalElement Name="Kommissionierzone" ID="{pick}">
+          <ExternalInterface Name="Anschluss" ID="{pick-port}" RefBaseClassPath="AutomationMLInterfaceClassLib/AutomationMLBaseInterface/Port" />
+          <RoleRequirements RefBaseRoleClassPath="AutomationMLDMIRoleClassLib/DMIRoleClassLib/Storage" />
+        </InternalElement>
+        <InternalElement Name="Tor 1" ID="{gate}">
+          <ExternalInterface Name="Anschluss" ID="{gate-port}" RefBaseClassPath="AutomationMLInterfaceClassLib/AutomationMLBaseInterface/Port" />
+          <RoleRequirements RefBaseRoleClassPath="AutomationMLDMIRoleClassLib/DMIRoleClassLib/Gate" />
+        </InternalElement>
+        <InternalElement Name="Förderer 1" ID="{conveyor}">
+          <ExternalInterface Name="Ein" ID="{conveyor-in}" RefBaseClassPath="AutomationMLInterfaceClassLib/AutomationMLBaseInterface/Port">
+            <Attribute Name="Direction" AttributeDataType="xs:string"><Value>In</Value></Attribute>
+          </ExternalInterface>
+          <ExternalInterface Name="Aus" ID="{conveyor-out}" RefBaseClassPath="AutomationMLInterfaceClassLib/AutomationMLBaseInterface/Port">
+            <Attribute Name="Direction" AttributeDataType="xs:string"><Value>Out</Value></Attribute>
+          </ExternalInterface>
+          <RoleRequirements RefBaseRoleClassPath="AutomationMLExtendedRoleClassLib/Conveyor" />
+        </InternalElement>
+        <InternalElement Name="Feuerlöscher 3" ID="{extinguisher}" />
+        <InternalElement Name="Roboter A" ID="{robot}">
+          <RoleRequirements RefBaseRoleClassPath="AutomationMLDMIRoleClassLib/DMIRoleClassLib/Robot" />
+        </InternalElement>
+        <InternalLink Name="L1" RefPartnerSideA="{rack-port}" RefPartnerSideB="{conveyor-in}" />
+        <InternalLink Name="L2" RefPartnerSideA="{conveyor-out}" RefPartnerSideB="{pick-port}" />
+        <InternalLink Name="L3" RefPartnerSideA="{gate}:Anschluss" RefPartnerSideB="{pick}:Anschluss" />
+        <RoleRequirements RefBaseRoleClassPath="AutomationMLExtendedRoleClassLib/Area" />
+      </InternalElement>
+      <RoleRequirements RefBaseRoleClassPath="AutomationMLExtendedRoleClassLib/Site" />
+    </InternalElement>
+  </InstanceHierarchy>
+</CAEXFile>

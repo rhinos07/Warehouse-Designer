@@ -49,6 +49,10 @@ export interface Building {
   name?: string;
   entities?: Record<string, Entity[]>;
   point_counts?: Record<string, number>;
+  /** Every storage point, for the AutomationML export; the diagram uses point_counts. */
+  points?: Entity[];
+  /** The compiled artifact's metadata.dataset_id, e.g. example_customer/pa11/hall_3. */
+  dataset?: string;
   /** Imported files the editor changes, by file name (storage.yaml, wcs.yaml, lanes.yaml, movement_rules.yaml). */
   sources?: Record<string, string>;
 }

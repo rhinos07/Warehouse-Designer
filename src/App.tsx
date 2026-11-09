@@ -6,6 +6,7 @@ import { ChecksView } from "./Checks";
 import { DataView, type FileChange, type Focus } from "./DataView";
 import type { Change, Files } from "./editor";
 import { assign, canPickDirectory, detectLayout, pickDirectory, scanFileList, writeFiles, type Scan } from "./folder";
+import type { CreatedBuilding } from "./AmlImportPanel";
 import { TopologyView } from "./Topology";
 import { WorkflowView } from "./Workflow";
 import {
@@ -25,11 +26,13 @@ type Phase = "loading" | "ready" | "running" | "failed";
 type Tab = "checks" | "topology" | "workflow" | "data";
 const TOPOLOGY: RepoName = "Topology-as-Code";
 
-/** One edit: a file's new text, keyed `<repo>/<path>`. */
+/** One edit: a file's new text, keyed `<repo>/<path>`; a key not in the data creates that file. */
 interface Edit {
   key: string;
   text: string;
-  summary: string;
+  summary: string; // empty for the further files of a group
+  /** Edits made together (e.g. an import's files): undone together. */
+  group?: number;
 }
 
 const keyOf = (f: { repo: string; path: string }) => `${f.repo}/${f.path}`;
@@ -105,8 +108,29 @@ export default function App() {
     return assign(scan, layout, layout.kind === "unknown" ? chosen || undefined : undefined);
   }, [scan, chosen, examples]);
   const overrides = useMemo(() => new Map(edits.map((e) => [e.key, e.text])), [edits]);
+  /** Where a new file of a repo goes in the opened folder; undefined if the folder has no place for that repo. */
+  function sourceFor(repo: RepoName, path: string): string | undefined {
+    if (!scan || !layout) return undefined;
+    if (layout.kind === "workspace") {
+      const dir = scan.files.map((f) => f.path.split("/")[0]).find((d) => d.toLowerCase() === repo.toLowerCase());
+      return dir ? `${dir}/${path}` : undefined;
+    }
+    return (layout.kind === "repo" ? layout.repo : chosen) === repo ? path : undefined;
+  }
+  /** Files the edits create: in no data read so far. */
+  const created = useMemo<UserFile[]>(() => {
+    const known = new Set(base.map(keyOf));
+    return [...overrides].filter(([key]) => !known.has(key)).map(([key, text]) => {
+      const repo = REPOS.find((r) => key.startsWith(`${r}/`))!;
+      const path = key.slice(repo.length + 1);
+      return { repo, path, text, source: sourceFor(repo, path) };
+    });
+  }, [base, overrides, scan, chosen]);
   /** The data with the unsaved edits applied. */
-  const current = useMemo(() => base.map((f) => (overrides.has(keyOf(f)) ? { ...f, text: overrides.get(keyOf(f))! } : f)), [base, overrides]);
+  const current = useMemo(
+    () => [...base.map((f) => (overrides.has(keyOf(f)) ? { ...f, text: overrides.get(keyOf(f))! } : f)), ...created],
+    [base, overrides, created],
+  );
   const topologyFiles = useMemo<Files>(
     () => Object.fromEntries(current.filter((f) => f.repo === TOPOLOGY).map((f) => [f.path, f.text])),
     [current],
@@ -115,8 +139,9 @@ export default function App() {
     () =>
       base
         .filter((f) => overrides.has(keyOf(f)) && overrides.get(keyOf(f)) !== f.text)
-        .map((f) => ({ path: keyOf(f), before: f.text, after: overrides.get(keyOf(f))! })),
-    [base, overrides],
+        .map((f) => ({ path: keyOf(f), before: f.text, after: overrides.get(keyOf(f))! }))
+        .concat(created.map((f) => ({ path: keyOf(f), before: "", after: f.text, created: true }))),
+    [base, overrides, created],
   );
 
   function files(): UserFile[] | undefined {
@@ -197,13 +222,27 @@ export default function App() {
   async function save() {
     if (!scan?.handle) return;
     const targets = base.filter((f) => overrides.has(keyOf(f)) && overrides.get(keyOf(f)) !== f.text && f.source);
+    const homeless = created.filter((f) => !f.source);
+    if (homeless.length) {
+      setNotice(t("app.noPlaceForNew", { files: homeless.map(keyOf).join(", ") }));
+      return;
+    }
     try {
-      await writeFiles(scan.handle, targets.map((f) => ({ path: f.source!, text: overrides.get(keyOf(f))!, expected: f.text })));
+      await writeFiles(scan.handle, [
+        ...targets.map((f) => ({ path: f.source!, text: overrides.get(keyOf(f))!, expected: f.text as string | null })),
+        ...created.map((f) => ({ path: f.source!, text: f.text, expected: null })),
+      ]);
       const written = new Map(targets.map((f) => [f.source!, overrides.get(keyOf(f))!]));
-      setScan({ ...scan, files: scan.files.map((f) => (written.has(f.path) ? { ...f, text: written.get(f.path)! } : f)) });
+      setScan({
+        ...scan,
+        files: [
+          ...scan.files.map((f) => (written.has(f.path) ? { ...f, text: written.get(f.path)! } : f)),
+          ...created.map((f) => ({ path: f.source!, text: f.text })),
+        ],
+      });
       setEdits([]); // same data as before, now saved: no new version
       setNotice("");
-      setSaved(tn("app.saved", targets.length, { folder: scan.rootName }));
+      setSaved(tn("app.saved", targets.length + created.length, { folder: scan.rootName }));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     }
@@ -231,6 +270,23 @@ export default function App() {
 
   function applyChange(change: Change) {
     changeData([...edits, { key: `${TOPOLOGY}/${change.path}`, text: change.text, summary: change.summary }]);
+  }
+
+  /** A new building's files (and its facility.yaml), as one edit to undo. */
+  function createBuilding(building: CreatedBuilding) {
+    const group = Date.now();
+    changeData([
+      ...edits,
+      ...building.files.map((f, i) => ({ key: `${TOPOLOGY}/${f.path}`, text: f.text, summary: i ? "" : building.summary, group })),
+    ]);
+  }
+
+  /** Undoes the last edit, or the last group of edits made together. */
+  function undo() {
+    const last = edits[edits.length - 1];
+    let keep = edits.length - 1;
+    while (last?.group !== undefined && keep > 0 && edits[keep - 1].group === last.group) keep--;
+    changeData(edits.slice(0, keep));
   }
 
   const lang = useLang();
@@ -267,7 +323,7 @@ export default function App() {
             <button onClick={openFolder} disabled={busy}>{t("app.openFolder")}</button>
             {scan && <button className="secondary" onClick={() => changeSource(null)} disabled={busy}>{t("app.useExamples")}</button>}
           </div>
-          <input ref={folderInput} type="file" hidden {...{ webkitdirectory: "" }} onChange={(e) => onFileList(e.target.files)} />
+          <input ref={folderInput} type="file" hidden data-folder-input {...{ webkitdirectory: "" }} onChange={(e) => onFileList(e.target.files)} />
         </div>
         {layout?.kind === "unknown" && (
           <label className="choose">
@@ -293,11 +349,11 @@ export default function App() {
 
       <ChangesView
         files={changed}
-        log={edits.map((e) => e.summary)}
+        log={edits.filter((e) => e.summary).map((e) => e.summary)}
         busy={busy}
         saveLabel={scan?.handle ? t("app.saveToFolder") : undefined}
         onSave={save}
-        onUndo={() => changeData(edits.slice(0, -1))}
+        onUndo={undo}
         onDiscard={() => window.confirm(t("app.confirmDiscardAll")) && changeData([])}
       />
 
@@ -340,10 +396,12 @@ export default function App() {
                 findings={topologyFindings}
                 files={topologyFiles}
                 onChange={applyChange}
+                onCreate={createBuilding}
                 onOpen={(target) => {
                   setFocus({ repo: TOPOLOGY, ...target });
                   setTab("data");
                 }}
+                catalog={catalog}
                 busy={busy}
               />
             </>
