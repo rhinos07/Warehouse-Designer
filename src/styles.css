@@ -226,3 +226,15 @@ code.readonly { padding: 4px 0; }
 .lang-switch button { padding: 4px 10px; font-size: 13px; }
 .lang-switch button:first-child { border-radius: 6px 0 0 6px; }
 .lang-switch button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+
+.aml-import { margin: 0 0 12px; border-color: var(--accent); }
+.aml-import h3 { margin: 0 0 4px; }
+.import-target { display: flex; flex-wrap: wrap; gap: 16px; }
+.import-target .field { min-width: 220px; }
+.import-elements { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0; }
+.import-elements th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px; border-bottom: 1px solid var(--border); }
+.import-elements td { padding: 3px 4px; border-bottom: 1px solid var(--border); }
+.import-elements select { font: inherit; }
+.import-notes { font-size: 13px; margin: 8px 0; }
+.import-notes ul { margin: 4px 0; padding-left: 18px; }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--ok-bg); color: var(--ok); }

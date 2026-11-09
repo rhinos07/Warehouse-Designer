@@ -6,6 +6,8 @@ export interface ChangedFile {
   path: string; // shown to the user: repo path, e.g. Topology-as-Code/customers/...
   before: string;
   after: string;
+  /** A file the edits create. */
+  created?: boolean;
 }
 
 /** Unsaved edits: what changed, as a diff, with undo, discard and save or download. */
@@ -49,7 +51,8 @@ function FileDiff({ file, download }: { file: ChangedFile; download: boolean }) 
   return (
     <details className="file-diff" data-file={file.path}>
       <summary>
-        <code>{file.path}</code> <span className="added">+{added}</span> <span className="removed">−{removed}</span>
+        <code>{file.path}</code> {file.created && <span className="tag">{t("changes.new")}</span>}{" "}
+        <span className="added">+{added}</span> <span className="removed">−{removed}</span>
         {download && (
           <>
             {" "}

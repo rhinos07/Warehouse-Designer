@@ -15,6 +15,10 @@
 //    click, kept across a reload; findings in the tools' own English.
 // 10. AutomationML export of an edited hall: the new elements are in it, and
 //     every reference in the file resolves (checked with the browser's XML parser).
+// 11. AutomationML import: this page's export of the AutoStore hall comes back
+//     as a new hall that passes validate.py and is saved into the folder; a
+//     planner's file with standard roles becomes a skeleton; undo removes an
+//     import in one step.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -245,8 +249,8 @@ function fakeFolder(files) {
       }
     },
     getDirectoryHandle: async (n) => dirHandle(`${prefix}${n}/`, n),
-    getFileHandle: async (n) => {
-      if (!(`${prefix}${n}` in window.__fs)) throw new DOMException("not found", "NotFoundError");
+    getFileHandle: async (n, options) => {
+      if (!options?.create && !(`${prefix}${n}` in window.__fs)) throw new DOMException("not found", "NotFoundError");
       return fileHandle(`${prefix}${n}`);
     },
     queryPermission: async () => "prompt",
@@ -291,6 +295,59 @@ async function saveTests(browser) {
   await page.getByText("wurde inzwischen außerhalb geändert").waitFor({ timeout: TIMEOUT });
   check(!(await page.evaluate((p) => window.__fs[p], storage)).includes("DOOR_05"), "a file changed on disk meanwhile is not overwritten");
   check(await page.locator("[data-changes]").isVisible(), "the refused edit stays pending");
+  await page.close();
+}
+
+async function importTests(browser) {
+  const files = Object.fromEntries(Object.entries(specs.repos["Topology-as-Code"].files).filter(([p]) => p.startsWith("customers/")));
+  const facility = "customers/autostore_customer/facilities/facility_as01/facility.yaml";
+  const hall2 = "customers/autostore_customer/facilities/facility_as01/buildings/hall_2";
+  const page = await browser.newPage({ locale: "de-DE" });
+  await page.addInitScript(fakeFolder, files);
+  page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
+  await page.goto(URL);
+  const open = page.getByRole("button", { name: "Ordner öffnen …" });
+  await page.waitForFunction((b) => !b.disabled, await open.elementHandle(), { timeout: TIMEOUT });
+  await open.click();
+  await page.locator("[data-source]", { hasText: "Topology-as-Code" }).waitFor();
+  await openHall(page, "/ AS01 /");
+  await page.locator('[data-node="WC_PORT_01"]').waitFor({ state: "visible", timeout: TIMEOUT });
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "AutomationML exportieren" }).click()]);
+  const exported = await download.path();
+
+  await page.locator("[data-aml-import-file]").setInputFiles({ name: "autostore.aml", mimeType: "application/xml", buffer: fs.readFileSync(exported) });
+  await page.locator("[data-aml-import]").waitFor({ timeout: 10_000 });
+  check((await page.getByLabel("Hallen-Id (Ordnername)").inputValue()) === "hall_2", "the import proposes the next free hall id, hall_2");
+  check((await page.getByLabel("Standort").inputValue()) === facility, "the import picks the facility the file names (AS01)");
+  check(/1 × Lagertyp.*6 × Arbeitsplatz.*4 × Meldepunkt/.test(await page.locator("[data-import-counts]").textContent()), "the preview counts what will be created");
+  let state = await editAndValidate(page, () => page.getByRole("button", { name: "Halle anlegen" }).click());
+  check(state === "ok", "this page's own export, imported as a new hall, passes validate.py");
+  check((await page.locator(".topo-toolbar select").inputValue()) === `${hall2}/warehouse.yaml`, "the diagram switches to the new hall");
+  check(await page.locator('[data-node="WC_PORT_01"]').isVisible() && await page.locator('[data-node="AUTOSTORE_GRID"]').isVisible(), "the new hall's places are in the diagram");
+  check(await page.locator(`[data-file="Topology-as-Code/${hall2}/structure/storage.yaml"] .tag`).isVisible(), "the changes list the new files as new");
+  check((await page.locator("[data-changes] .change-log li").count()) === 1, "an import is one entry in the change log");
+
+  await page.getByRole("button", { name: "In Ordner speichern" }).click();
+  await page.locator("[data-saved]").waitFor({ timeout: TIMEOUT });
+  const disk = await page.evaluate(() => window.__fs);
+  check(["warehouse.yaml", "structure/storage.yaml", "structure/wcs.yaml", "structure/lanes.yaml"].every((f) => disk[`${hall2}/${f}`]?.includes("imported from autostore.aml")),
+    "saving writes the new hall's files into the folder");
+  check(disk[facility].includes('- "buildings/hall_2/warehouse.yaml"') && disk[facility].startsWith(files[facility].slice(0, files[facility].indexOf("buildings/hall_1"))),
+    "saving adds the hall to facility.yaml and keeps the rest of it");
+
+  await page.locator("[data-aml-import-file]").setInputFiles("tests/fixtures/layout-planner.aml");
+  await page.locator("[data-aml-import]").waitFor({ timeout: 10_000 });
+  check((await page.getByLabel("Hallen-Id (Ordnername)").inputValue()) === "halle_7", "a planner's area name becomes the proposed hall id");
+  check((await page.getByLabel("Feuerlöscher 3 übernehmen als").inputValue()) === "ignore" && (await page.getByLabel("Tor 1 übernehmen als").inputValue()) === "door",
+    "elements without a known role are proposed as not taken over; a Gate becomes a door");
+  check(/staging_section/.test(await page.locator(".import-notes").textContent()), "the preview says the door's staging section is missing");
+  state = await editAndValidate(page, () => page.getByRole("button", { name: "Halle anlegen" }).click());
+  check(state === "failed", "the planner's skeleton is checked at once, and fails on what the file could not give");
+  check(await page.locator('[data-node="HOCHREGAL_1"]').isVisible() && await page.locator('[data-node="TOR_1"]').isVisible(), "the skeleton's places are in the diagram");
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await page.locator("[data-changes]").waitFor({ state: "detached", timeout: TIMEOUT });
+  await waitForCompile(page);
+  check(!(await page.locator(".topo-toolbar select option").allTextContents()).some((o) => o.includes("Halle 7")), "undo removes the whole import in one step");
   await page.close();
 }
 
@@ -512,7 +569,7 @@ try {
     'condition: "storage_technology_split"',
     'condition: "no_such_reason"',
   );
-  await page.locator('input[type="file"]').setInputFiles(folder);
+  await page.locator("[data-folder-input]").setInputFiles(folder);
   await page.locator("[data-source]", { hasText: "OrderOrchestration-as-Code" }).waitFor();
   await page.getByText("Der Ordner enthält keine Topology-as-Code-Daten.").waitFor({ timeout: TIMEOUT });
   check(true, "the topology tab says the folder has no topology data");
@@ -535,7 +592,7 @@ try {
     'entity_type: "storage_type"\n      entity_id: "HBR"',
     'entity_type: "door"\n      entity_id: "HBR"',
   );
-  await page.locator('input[type="file"]').setInputFiles(topology);
+  await page.locator("[data-folder-input]").setInputFiles(topology);
   // Reading the folder is asynchronous: wait until the page shows it as the data source.
   await page.locator("[data-source]", { hasText: "Topology-as-Code" }).waitFor();
   await page.getByRole("button", { name: "Prüfung starten" }).click();
@@ -550,6 +607,7 @@ try {
 
   await editTests(browser);
   await saveTests(browser);
+  await importTests(browser);
   await dataTests(browser);
   await workflowTests(browser);
   await languageTests(browser);

@@ -11,7 +11,7 @@ It runs without a server and is published with GitHub Pages:
 
 Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
-## Status: phase 5, all planned phases built (simulation left open), plus an AutomationML export prototype
+## Status: phase 5, all planned phases built (simulation left open), plus an AutomationML export and import prototype
 
 - **Open a folder** with YAML definitions and check it with the repos' own
   validators: each repo's `tools/validate.py` per customer,
@@ -117,7 +117,33 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   Ids are derived from the data, so exporting the same data twice gives the
   same file. The example halls' exports were checked against the official
   CAEX 3.0 XSD (see [`docs/concept.md`](docs/concept.md)).
-- **Review and save:** unsaved edits are listed with a diff per file.
+- **AutomationML import (prototype).** "AutomationML importieren …" in the
+  topology tab turns an `.aml` file into a new hall (`src/amlImport.ts`).
+  The file can come from a layout planner or from this page's own export.
+  1. **Preview:** each element gets a proposed kind from its role. The
+     roles of this page's export map one to one. Standard roles map where
+     the crosswalk rates the fit good or partial: Storage, StorageUnit, Gate,
+     Conveyor, Transport, Site and Area. Every proposal can be changed;
+     elements without a known role are proposed as "nicht übernehmen".
+  2. **Target:** choose the facility and the new hall's id.
+  3. **Result:** the page writes `warehouse.yaml`,
+     `structure/storage.yaml`, `wcs.yaml` and `lanes.yaml`, and adds the hall
+     to the facility's `facility.yaml`. Topology's `validate.py` checks it
+     right away.
+
+  How the import fills the files:
+  - **Attributes** become fields where the Topology schema of that list has
+    a field of that name, in the schema's order.
+  - **Missing required fields** get defaults.
+  - **Free names** become schema-conform ids (`Förderer 1` → `FOERDERER_1`).
+  - **Connections** come from InternalLinks. A connection element's port
+    directions give one-way or two-way.
+
+  A list under "Bitte prüfen" shows what was renamed, assumed or left out.
+  The import is one entry in the change log and is undone in one step.
+  Saving into the opened folder creates the new files.
+- **Review and save:** unsaved edits are listed with a diff per file. New
+  files are marked "neu".
   - "In Ordner speichern" writes them back into the opened folder (Edge and
     Chrome). It refuses if a file changed on disk in the meantime.
   - Elsewhere, or for the example data, the changed files can be

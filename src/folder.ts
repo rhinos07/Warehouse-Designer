@@ -23,8 +23,8 @@ interface DirectoryHandle {
   kind: "directory";
   name: string;
   values(): AsyncIterable<DirectoryHandle | FileHandle>;
-  getDirectoryHandle(name: string): Promise<DirectoryHandle>;
-  getFileHandle(name: string): Promise<FileHandle>;
+  getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<DirectoryHandle>;
+  getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandle>;
   queryPermission(options: { mode: "readwrite" }): Promise<Permission>;
   requestPermission(options: { mode: "readwrite" }): Promise<Permission>;
 }
@@ -102,30 +102,41 @@ export function assign(scan: Scan, layout: Layout, chosen?: RepoName): UserFile[
   return out;
 }
 
-async function fileHandle(root: DirectoryHandle, path: string): Promise<FileHandle> {
+async function fileHandle(root: DirectoryHandle, path: string, create = false): Promise<FileHandle> {
   const parts = path.split("/");
   let dir = root;
-  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
-  return dir.getFileHandle(parts[parts.length - 1]);
+  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create });
+  return dir.getFileHandle(parts[parts.length - 1], { create });
+}
+
+/** The file's text, or null if it does not exist. */
+async function readIfExists(root: DirectoryHandle, path: string): Promise<string | null> {
+  try {
+    return await (await (await fileHandle(root, path)).getFile()).text();
+  } catch (error) {
+    if ((error as DOMException).name === "NotFoundError" || (error as DOMException).name === "TypeMismatchError") return null;
+    throw error;
+  }
 }
 
 /**
  * Writes files back into the opened folder. Refuses, writing nothing, if any
- * of them changed on disk since the folder was read (`expected`).
+ * of them changed on disk since the folder was read (`expected`), or, for a
+ * new file (`expected: null`), exists by now.
  */
-export async function writeFiles(root: DirectoryHandle, files: { path: string; text: string; expected: string }[]): Promise<void> {
+export async function writeFiles(root: DirectoryHandle, files: { path: string; text: string; expected: string | null }[]): Promise<void> {
   if ((await root.queryPermission({ mode: "readwrite" })) !== "granted" && (await root.requestPermission({ mode: "readwrite" })) !== "granted") {
     throw new Error(t("folder.noWrite"));
   }
   const changed: string[] = [];
   for (const file of files) {
-    if ((await (await (await fileHandle(root, file.path)).getFile()).text()) !== file.expected) changed.push(file.path);
+    if ((await readIfExists(root, file.path)) !== file.expected) changed.push(file.path);
   }
   if (changed.length) {
     throw new Error(t("folder.changedOutside", { files: changed.join(", ") }));
   }
   for (const file of files) {
-    const writable = await (await fileHandle(root, file.path)).createWritable();
+    const writable = await (await fileHandle(root, file.path, file.expected === null)).createWritable();
     await writable.write(file.text);
     await writable.close();
   }
