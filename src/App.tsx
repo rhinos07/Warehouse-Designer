@@ -7,6 +7,7 @@ import { DataView, type FileChange, type Focus } from "./DataView";
 import type { Change, Files } from "./editor";
 import { assign, canPickDirectory, detectLayout, pickDirectory, scanFileList, writeFiles, type Scan } from "./folder";
 import type { CreatedBuilding } from "./AmlImportPanel";
+import { MaterialFlowView } from "./MaterialFlow";
 import { TopologyView } from "./Topology";
 import { WorkflowView } from "./Workflow";
 import {
@@ -23,7 +24,7 @@ import {
 } from "./types";
 
 type Phase = "loading" | "ready" | "running" | "failed";
-type Tab = "checks" | "topology" | "workflow" | "data";
+type Tab = "checks" | "topology" | "simulation" | "workflow" | "data";
 const TOPOLOGY: RepoName = "Topology-as-Code";
 
 /** One edit: a file's new text, keyed `<repo>/<path>`; a key not in the data creates that file. */
@@ -199,7 +200,7 @@ export default function App() {
 
   // The topology tab compiles on demand, once per data version.
   useEffect(() => {
-    if (tab === "topology" && phase === "ready" && !unresolved && topology?.version !== version) loadTopology();
+    if ((tab === "topology" || tab === "simulation") && phase === "ready" && !unresolved && topology?.version !== version) loadTopology();
   });
 
   async function openFolder() {
@@ -360,6 +361,7 @@ export default function App() {
       <nav className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === "checks"} onClick={() => setTab("checks")}>{t("tab.checks")}</button>
         <button role="tab" aria-selected={tab === "topology"} onClick={() => setTab("topology")}>{t("tab.topology")}</button>
+        <button role="tab" aria-selected={tab === "simulation"} onClick={() => setTab("simulation")}>{t("tab.simulation")}</button>
         <button role="tab" aria-selected={tab === "workflow"} onClick={() => setTab("workflow")}>{t("tab.workflow")}</button>
         <button role="tab" aria-selected={tab === "data"} onClick={() => setTab("data")}>{t("tab.data")}</button>
       </nav>
@@ -406,6 +408,15 @@ export default function App() {
               />
             </>
           )}
+        </section>
+      )}
+
+      {tab === "simulation" && (
+        <section data-simulation={topology?.version === version && phase === "ready" ? "fresh" : "stale"}>
+          {unresolved && <p className="status">{t("app.chooseRepoFirst")}</p>}
+          {phase === "running" && !topology && <p className="status">{t("app.compiling")}</p>}
+          {topology?.note && <p className="status">{t(topology.note)}</p>}
+          {topology && !topology.note && <MaterialFlowView key={`${source}:${topology.version}`} buildings={topology.buildings} />}
         </section>
       )}
 

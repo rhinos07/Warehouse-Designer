@@ -238,3 +238,25 @@ code.readonly { padding: 4px 0; }
 .import-notes { font-size: 13px; margin: 8px 0; }
 .import-notes ul { margin: 4px 0; padding-left: 18px; }
 .tag { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--ok-bg); color: var(--ok); }
+
+/* Material flow */
+.page:has(.simulation) { max-width: 1280px; }
+.simulation h3 { font-size: 15px; margin: 18px 0 6px; }
+.sim-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; margin: 10px 0; }
+.sim-controls input[type="number"], .sim-flows input[type="number"] { width: 72px; }
+.sim-clock { margin-left: auto; font-variant-numeric: tabular-nums; }
+.sim-table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.sim-table th, .sim-table td { text-align: left; padding: 3px 8px 3px 0; vertical-align: top; }
+.sim-table thead th { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); }
+.sim-table tbody th { font-weight: 600; white-space: nowrap; }
+.sim-table td { font-variant-numeric: tabular-nums; }
+.sim-table tr.clickable { cursor: pointer; }
+.sim-table tr.clickable:hover, .sim-table tr.marked { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.sim-reach { margin: 8px 0; }
+.sim-reach summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.sim-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: middle; }
+.sim-unit { position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--surface); pointer-events: none; z-index: 10; }
+.sim-queue { position: absolute; top: -9px; right: -9px; background: var(--warn); color: #fff; border-radius: 10px; font-size: 11px; padding: 0 6px; }
+.topo-node.bottleneck { outline: 3px solid var(--bad); outline-offset: 2px; }
+.topo-node.marked { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 45%, transparent); }
+.simulation .react-flow__edge-path { transition: opacity 0.2s; }

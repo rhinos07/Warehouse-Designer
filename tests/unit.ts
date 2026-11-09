@@ -5,6 +5,8 @@ import { addBuilding, proposeKind, readAml, toTopology } from "../src/amlImport"
 import { stableId, toAutomationML } from "../src/automationml";
 import { parseXml, XmlError } from "../src/xml";
 import { describePath, explain } from "../src/findings";
+import { flowModel, reachability, seconds, verdict } from "../src/flow";
+import { prepareFlow, Simulation } from "../src/simulation";
 import { TEXTS } from "../src/i18n";
 import { LISTS } from "../src/lists";
 import { child, kindOf, resolve, schemaAt, unresolved, type Located } from "../src/schema";
@@ -363,6 +365,71 @@ const pickId = planner.elements.find((e) => e.name === "Kommissionierzone")!.id;
 const without = toTopology(planner, { [pickId]: "ignore" }, target, facilityText, importCatalog);
 check(!without.files.some((f) => f.path.endsWith("lanes.yaml")) && without.notes.some((n) => n.code === "unknownEnd"),
   "a changed kind changes the result: without the pick zone, no connection has two ends");
+
+// Material flow: a small hall built by hand. IN (inbound door) -> BUF (manual)
+// -> PACK (work center, 60/h) -> OUT (outbound door); AUTO (explicit_only)
+// hangs off BUF on a conveyor segment; LOOSE has no connection.
+const flowHall = {
+  path: "flow-test", ok: true,
+  point_counts: { BUF: 10, AUTO: 10, LOOSE: 5 },
+  entities: {
+    door: [{ id: "IN", direction: "inbound" }, { id: "OUT", direction: "outbound" }],
+    storage_type: [
+      { id: "BUF", movement_policy: "default_allow" },
+      { id: "AUTO", movement_policy: "explicit_only" },
+      { id: "LOOSE", movement_policy: "default_allow" },
+    ],
+    work_center: [{ id: "PACK", throughput_capacity: 60 }],
+    can_edge: [
+      { id: "connection:C1:IN:BUF", from: "IN", to: "BUF", source_type: "connection", source_id: "C1", transport_mode: "forklift", expected_duration: { value: 2, unit: "min" } },
+      { id: "connection:C2:BUF:PACK", from: "BUF", to: "PACK", source_type: "connection", source_id: "C2", transport_mode: "walking" },
+      { id: "connection:C3:PACK:OUT", from: "PACK", to: "OUT", source_type: "connection", source_id: "C3", transport_mode: "walking", expected_duration: { value: 30, unit: "s" } },
+      { id: "conveyor_segment:S1:BUF:AUTO", from: "BUF", to: "AUTO", source_type: "conveyor_segment", source_id: "S1", transport_mode: "conveyor", capacity: 1 },
+    ],
+    movement_rule: [
+      { id: "NO_IN_TO_PACK", from: { door: "IN" }, to: { work_center: "PACK" }, allowed: false },
+      { id: "BUF_TO_AUTO", from: { storage_type: "BUF" }, to: { storage_type: "AUTO", section: "S_A" }, allowed: true },
+    ],
+  },
+} as unknown as Building;
+const fm = flowModel(flowHall);
+check(seconds({ value: 4, unit: "min" }) === 240 && seconds({ value: 3 }) === 3 && seconds("x") === undefined, "durations are read in seconds");
+const reach = reachability(fm);
+const inBuf = reach.inbound.find((m) => m.from === "IN" && m.to === "BUF")!;
+check(inBuf.path?.length === 1 && inBuf.seconds === 120 && inBuf.verdict.allowed, "IN -> BUF: one connection, 2 min, allowed by default");
+const inAuto = reach.inbound.find((m) => m.to === "AUTO")!;
+check(inAuto.path?.map((l) => l.to).join(">") === "BUF>AUTO" && !inAuto.verdict.allowed && inAuto.verdict.reason === "explicit_missing",
+  "IN -> AUTO has a path, but explicit_only needs a rule naming the move");
+const bufAuto = verdict(fm, "BUF", "AUTO");
+check(bufAuto.allowed && bufAuto.rule === "BUF_TO_AUTO" && bufAuto.partial === "section S_A", "a rule naming both sides allows an explicit_only move, noting its section");
+check(verdict(fm, "IN", "PACK").reason === "forbidden", "a rule with allowed: false forbids");
+check(reach.unconnected.join() === "LOOSE" && reach.inbound.find((m) => m.to === "LOOSE")!.path === null, "a storage type without connections is unreachable");
+const outFlow = prepareFlow(fm, { from: "BUF", via: "PACK", to: "OUT", perHour: 10 }, true);
+check(!outFlow.problems.length && outFlow.nodes.join(">") === "BUF>PACK>OUT", "an outbound flow via a work center runs through it");
+check(prepareFlow(fm, { from: "IN", to: "AUTO", perHour: 10 }, true).problems[0]?.problem === "forbidden" &&
+  !prepareFlow(fm, { from: "IN", to: "AUTO", perHour: 10 }, false).problems.length, "without the rules, only the physical path counts");
+
+const run = (perHour: number, fill = 0.5) => {
+  const sim = new Simulation(fm, flowHall.point_counts!, { flows: [{ from: "IN", to: "BUF", perHour }, { from: "BUF", via: "PACK", to: "OUT", perHour }], rules: true, fill, seed: 7 });
+  sim.advance(8 * 3600);
+  return sim.snapshot();
+};
+const calm = run(20);
+const fingerprint = (s: ReturnType<typeof run>) => JSON.stringify([s.flows, [...s.nodes.values()], [...s.links.entries()]]);
+check(fingerprint(calm) === fingerprint(run(20)), "the same seed gives the same result");
+check(calm.flows[0].done > 100 && calm.flows[1].done > 100, `both flows move load units (${calm.flows[0].done} in, ${calm.flows[1].done} out)`);
+const pack = calm.nodes.get("PACK")!;
+check(pack.utilization > 0.25 && pack.utilization < 0.45, `20 per hour at 60 per hour keeps the work center about a third busy (${pack.utilization.toFixed(2)})`);
+const buf = calm.nodes.get("BUF")!;
+check(buf.stock! >= 0 && buf.stock! <= buf.capacity!, "stock stays within the storage points");
+const busy = run(90);
+check(busy.bottleneck?.id === "PACK" && busy.bottleneck.utilization > 0.95, `90 per hour jams the 60-per-hour work center (${busy.bottleneck?.id})`);
+const empty = new Simulation(fm, flowHall.point_counts!, { flows: [{ from: "BUF", to: "OUT", perHour: 30 }], rules: true, fill: 0, seed: 1 });
+empty.advance(3600);
+check(empty.snapshot().flows[0].done === 0 && empty.snapshot().flows[0].waitingToStart > 0, "an empty storage type sends nothing; the orders wait");
+const full = new Simulation(fm, flowHall.point_counts!, { flows: [{ from: "IN", to: "BUF", perHour: 60 }], rules: true, fill: 1, seed: 1 });
+full.advance(3600);
+check(full.snapshot().flows[0].done === 0 && full.snapshot().nodes.get("IN")!.queue > 0, "a full storage type takes nothing; load units wait at the door");
 
 console.log(failures.length ? `\n${failures.length} failure(s)` : "\nall unit checks passed");
 process.exit(failures.length ? 1 : 0);

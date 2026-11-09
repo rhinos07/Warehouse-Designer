@@ -19,6 +19,9 @@
 //     as a new hall that passes validate.py and is saved into the folder; a
 //     planner's file with standard roles becomes a skeleton; undo removes an
 //     import in one step.
+// 12. Material flow: hall 3's reachability (physical path and movement rules)
+//     and a simulated 8 h run of the default flows; turning the rules off
+//     lets a flow into the explicit_only HBR run.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -483,6 +486,42 @@ async function workflowTests(browser) {
   await page.close();
 }
 
+async function materialFlowTests(browser) {
+  const page = await browser.newPage({ locale: "de-DE" });
+  page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
+  await page.goto(URL);
+  await page.getByRole("tab", { name: "Materialfluss" }).click();
+  await page.locator("[data-sim-hall]").waitFor({ timeout: TIMEOUT });
+  check((await page.locator("[data-sim-hall]").getAttribute("data-sim-hall")) === "example_customer/pa11/hall_3", "the material flow tab opens with hall 3");
+  const row = (move) => page.locator(`[data-move="${move}"]`);
+  check((await row("DOOR_01>FIX").getAttribute("data-path")) === "yes" && (await row("DOOR_01>FIX").getAttribute("data-allowed")) === "yes",
+    "DOOR_01 -> FIX: a physical path, allowed by the rules");
+  check((await row("DOOR_01>HBR").getAttribute("data-path")) === "yes" && (await row("DOOR_01>HBR").getAttribute("data-allowed")) === "no",
+    "DOOR_01 -> HBR: a physical path, but explicit_only and no rule names the move");
+  check((await row("DOOR_01>BLK").getAttribute("data-path")) === "no", "DOOR_01 -> BLK: no physical path");
+  check(await page.locator("[data-sim-unconnected]").isVisible(), "storage types without any connection are listed");
+  await row("DOOR_01>FIX").click();
+  check(await page.locator('[data-sim-node="HBR"]').evaluate((e) => e.classList.contains("marked")), "clicking a move marks its path in the diagram");
+
+  const flows = page.locator("[data-sim-flow]");
+  check((await flows.count()) === 2, "two default flows: one inbound, one outbound");
+  check((await page.locator('[data-sim-flow] [data-state="ok"]').count()) === 2, "both default flows can run");
+  await page.locator("[data-sim-play]").click();
+  await page.waitForFunction(() => document.querySelectorAll(".sim-unit").length > 0, null, { timeout: 20_000 });
+  check(true, "load units move on the diagram");
+  await page.locator("[data-sim-hours]").click();
+  const done = await page.$$eval("[data-done]", (els) => els.map((e) => Number(e.getAttribute("data-done"))));
+  check(done.length === 2 && done.every((n) => n > 50), `after 8 h both flows have finished load units (${done.join(", ")})`);
+  check((await page.locator("[data-sim-clock]").textContent()).includes("08:"), "the clock shows the simulated time");
+
+  const inbound = flows.nth(0);
+  await inbound.locator("select").nth(2).selectOption("HBR");
+  check((await inbound.locator('[data-state="problem"]').count()) === 1, "a flow into HBR does not run while the rules count");
+  await page.locator("[data-sim-rules]").uncheck();
+  check((await inbound.locator('[data-state="ok"]').count()) === 1, "without the rules, the flow into HBR runs");
+  await page.close();
+}
+
 async function languageTests(browser) {
   const page = await browser.newPage({ locale: "en-US" });
   page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
@@ -611,6 +650,7 @@ try {
   await dataTests(browser);
   await workflowTests(browser);
   await languageTests(browser);
+  await materialFlowTests(browser);
 } catch (error) {
   failures.push(String(error));
   console.log(`FAIL ${error}`);
