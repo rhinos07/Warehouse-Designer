@@ -1,10 +1,12 @@
 // Unit tests for the YAML text edits, against the repos' own files
 // (`npm run bundle` first). Run with `npm run test:unit`.
 import fs from "node:fs";
+import { stableId, toAutomationML } from "../src/automationml";
 import { describePath, explain } from "../src/findings";
 import { TEXTS } from "../src/i18n";
 import { LISTS } from "../src/lists";
 import { child, kindOf, resolve, schemaAt, unresolved, type Located } from "../src/schema";
+import type { Building } from "../src/types";
 import { appendItem, getItem, readYaml, removeItem, updateItem, type Item } from "../src/yamlEdit";
 
 const specs = JSON.parse(fs.readFileSync("public/specs.json", "utf8"));
@@ -227,6 +229,61 @@ check(
   `in English a finding keeps the tool's words, with location and subject in English (${JSON.stringify(englishFinding)})`,
 );
 check(corpus.every((line) => explain(line, "en").text.length > 0), "every finding of the corpus has an English text");
+
+// AutomationML export: a small hall, checked for structure, references and stable ids.
+const amlHall: Building = {
+  path: "customers/c/facilities/facility_f1/buildings/hall_1/warehouse.yaml", ok: true,
+  customer: "c", facility: "F1", building: "hall_1", dataset: "c/f1/hall_1",
+  entities: {
+    warehouse: [{ id: "hall_1", name: "Hall <1> & \"two\"" }],
+    storage_type: [{ id: "HBR", technology: "shuttle", depth: 2 }],
+    section: [{ id: "HBR.SEC_A", storage_type: "HBR", local_id: "SEC_A" }],
+    door: [{ id: "DOOR_01", direction: "inbound" }],
+    work_center: [{ id: "WC_01", step: "packing", workstation_template: "ws_x", storage_point_ref: true }],
+    equipment: [{ id: "SRM_01", type: "shuttle_4way", served_points: ["HBR"] }],
+    lane: [{ id: "L1", template: "lane_y", connects: ["HBR", "DOOR_01", "WC_01"] }],
+    can_edge: [
+      { id: "e1", from: "DOOR_01", to: "HBR", source_type: "connection", source_id: "C1", transport_mode: "forklift", expected_duration: { value: 120, unit: "s" } },
+      { id: "e2", from: "HBR", to: "DOOR_01", source_type: "connection", source_id: "C1", transport_mode: "forklift" },
+      { id: "e3", from: "HBR", to: "WC_01", source_type: "lane", source_id: "L1", transport_mode: "lane" },
+      { id: "e4", from: "WC_01", to: "DOOR_01", source_type: "lane", source_id: "L1", transport_mode: "lane" },
+      { id: "e5", from: "DOOR_01", to: "NOWHERE", source_type: "connection", source_id: "C2", transport_mode: "walking" },
+    ],
+    activity_area: [{ id: "PICK", activity: "picking", bins_from: ["HBR.SEC_A", "MISSING"] }],
+    movement_rule: [{ id: "R1", from: { storage_type: "HBR" }, to: { door: "DOOR_01" }, allowed: false }],
+  },
+  points: [
+    { id: "HBR.A-01", storage_type: "HBR", section: "HBR.SEC_A", max_weight: { value: 500, unit: "kg" }, allowed_load_unit_types: ["pallet_euro"], blocked: false },
+    { id: "WC_01", ref_kind: "work_center", coordinate: "WC_01" },
+  ],
+};
+const aml = toAutomationML(amlHall, { now: "2026-11-09T10:00:00Z" });
+check(aml.xml === toAutomationML(amlHall, { now: "2026-11-09T10:00:00Z" }).xml, "exporting the same hall twice gives the same AutomationML file");
+check(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(stableId("x")) && stableId("x") !== stableId("y"), "ids are version-8 UUIDs derived from the data");
+check(aml.fileName === "c_F1_hall_1.aml", `the file is named after the hall (${aml.fileName})`);
+check(aml.xml.includes("Hall &lt;1&gt; &amp; &quot;two&quot;") || aml.xml.includes("Hall &lt;1&gt; &amp; \"two\""), "text is escaped");
+const amlIds = [...aml.xml.matchAll(/ ID="([^"]+)"/g)].map((m) => m[1]);
+check(new Set(amlIds).size === amlIds.length, `every ID is unique (${amlIds.length})`);
+const portsOf = new Map<string, string[]>();
+for (const m of aml.xml.matchAll(/<InternalElement Name="[^"]*" ID="([^"]+)"[^>]*>([\s\S]*?)(?=<InternalElement|<\/InternalElement)/g)) {
+  portsOf.set(m[1], [...m[2].matchAll(/<ExternalInterface Name="([^"]+)"/g)].map((p) => p[1]));
+}
+const sides = [...aml.xml.matchAll(/RefPartnerSide[AB]="([^"]+)"/g)].map((m) => m[1]);
+check(sides.length === 12 && sides.every((side) => portsOf.get(side.split(":")[0])?.includes(side.slice(side.indexOf(":") + 1))),
+  `every link joins two existing ports (${sides.length / 2} links)`);
+const roles = new Set([...aml.xml.matchAll(/<RoleClass Name="([^"]+)" RefBaseClassPath="WarehouseAsCodeRoleClassLib|<RoleClass Name="([^"]+)"/g)].map((m) => m[1] ?? m[2]));
+const required = [...aml.xml.matchAll(/RefBaseRoleClassPath="WarehouseAsCodeRoleClassLib\/([^"]+)"/g)].map((m) => m[1]);
+check(required.length > 0 && required.every((r) => roles.has(r)), "every role an element requires is defined");
+check(aml.counts.elements === 7 && aml.counts.connections === 3 && aml.counts.mirrors === 1 && aml.counts.templates === 3,
+  `structure, places, connections, mirrors and templates are counted (${JSON.stringify(aml.counts)})`);
+check(JSON.stringify(aml.skipped) === JSON.stringify(["connection C2: NOWHERE", "activity_area PICK: MISSING"]), `missing targets are reported (${aml.skipped})`);
+check(!aml.xml.includes("R1") && !aml.xml.includes('Name="WC_01" ID="' + stableId("c/f1/hall_1", "storage_point", "WC_01")),
+  "movement rules and the storage-point twin of a work center are not exported");
+check(aml.xml.includes('<Attribute Name="max_weight" Unit="kg" AttributeDataType="xs:double">') && aml.xml.includes('<Attribute Name="depth" AttributeDataType="xs:int">'),
+  "measures keep their unit, integers their type");
+check(/<InternalElement Name="HBR\.SEC_A"[^>]*>[\s\S]*?<InternalElement Name="HBR\.A-01"/.test(aml.xml), "a storage point is nested in its section");
+check(aml.xml.indexOf("<SystemUnitClassLib") < aml.xml.indexOf("<AttributeTypeLib") && aml.xml.indexOf("<RoleClassLib") < aml.xml.indexOf("<SystemUnitClassLib"),
+  "libraries come in the order CAEX 3.0 requires");
 
 console.log(failures.length ? `\n${failures.length} failure(s)` : "\nall unit checks passed");
 process.exit(failures.length ? 1 : 0);

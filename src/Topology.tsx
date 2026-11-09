@@ -13,11 +13,12 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { toAutomationML } from "./automationml";
 import { EditPanel, type Form } from "./EditPanel";
 import { EditError, ENDPOINT_KINDS, HOME, removeLink, removeNode, usages, type Change, type Files } from "./editor";
 import { buildGraph, findingsFor, kindLabel, modeLabel, MODES, subtitle, type NodeKind, type TopoEdge, type TopoNode } from "./graph";
 import { t, tl, useLang } from "./i18n";
-import type { Building, Entity } from "./types";
+import type { Building, Catalog, Entity } from "./types";
 
 const EDGE_COLOR: Record<string, string> = {
   conveyor: "#2f6fdb",
@@ -53,7 +54,7 @@ function TopoNodeView({ data, selected }: NodeProps<Node<TopoNodeData>>) {
 }
 const nodeTypes = { topo: TopoNodeView };
 
-export function TopologyView({ buildings, findings, files, onChange, onOpen, busy = false }: {
+export function TopologyView({ buildings, findings, files, onChange, onOpen, catalog, busy = false }: {
   buildings: Building[];
   findings: string[];
   /** Topology-as-Code files by repo path; with onChange, the diagram can be edited. */
@@ -61,6 +62,8 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
   onChange?: (change: Change) => void;
   /** Opens an element's entry in the data tab's form. */
   onOpen?: (target: { path: string; key: string; id: string }) => void;
+  /** The page's catalogs: template attributes for the AutomationML export. */
+  catalog?: Catalog;
   busy?: boolean;
 }) {
   const [path, setPath] = useState(() => (buildings.find((b) => b.ok) ?? buildings[0])?.path);
@@ -70,6 +73,7 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [form, setForm] = useState<Form | null>(null);
   const [error, setError] = useState("");
+  const [exported, setExported] = useState("");
   const building = buildings.find((b) => b.path === path) ?? buildings[0];
   const graph = useMemo(() => (building?.ok ? buildGraph(building) : null), [building]);
   const [flow, setFlow] = useState<ReactFlowInstance<Node<TopoNodeData>> | null>(null);
@@ -83,6 +87,26 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
   }, [flow, nodeCount]);
   const canEdit = Boolean(files && onChange && building?.ok && building.sources);
   const edit = editing && canEdit;
+
+  /** Downloads the building, as compiled now (with unsaved edits), as an AutomationML file. */
+  function exportAml() {
+    const result = toAutomationML(building, { catalog });
+    const url = URL.createObjectURL(new Blob([result.xml], { type: "application/xml" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = result.fileName;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const { elements, connections, links, mirrors, templates } = result.counts;
+    setExported(
+      [
+        t("topology.amlDone", { file: result.fileName, elements, connections, links, mirrors, templates }),
+        result.skipped.length ? t("topology.amlSkipped", { refs: result.skipped.join(", ") }) : "",
+      ].filter(Boolean).join(" "),
+    );
+  }
 
   function select(node: string | null, edge: string | null = null) {
     setSelectedId(node);
@@ -211,6 +235,7 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
             value={building.path}
             onChange={(e) => {
               setPath(e.target.value);
+              setExported("");
               select(null);
             }}
           >
@@ -244,7 +269,13 @@ export function TopologyView({ buildings, findings, files, onChange, onOpen, bus
             <button className="secondary" onClick={() => setForm({ type: "reporting_point" })} disabled={busy}>{t("topology.addReportingPoint")}</button>
           </div>
         )}
+        {building.ok && (
+          <button className="secondary" onClick={exportAml} disabled={busy} title={t("topology.amlHint")} data-aml-export>
+            {t("topology.amlExport")}
+          </button>
+        )}
       </div>
+      {exported && <p className="hint" data-aml-result>{exported}</p>}
 
       {!building.ok && (
         <div className="status error">

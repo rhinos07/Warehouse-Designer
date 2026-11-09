@@ -344,6 +344,7 @@ export default function App() {
                   setFocus({ repo: TOPOLOGY, ...target });
                   setTab("data");
                 }}
+                catalog={catalog}
                 busy={busy}
               />
             </>

@@ -106,8 +106,10 @@ def findings(output):
 
 
 TOPOLOGY = "Topology-as-Code"
+# What the diagram draws, plus what the AutomationML export needs besides it.
 DIAGRAM_KINDS = ["storage_type", "door", "work_center", "reporting_point", "activity_area",
-                 "controller", "equipment", "can_edge", "movement_rule"]
+                 "controller", "equipment", "can_edge", "movement_rule",
+                 "section", "lane", "conveyor_segment", "conveyor_main", "warehouse"]
 
 
 EDITABLE_FILES = ["storage.yaml", "wcs.yaml", "lanes.yaml", "movement_rules.yaml"]
@@ -135,7 +137,8 @@ def sources(base, path):
 
 def compile_buildings():
     """Every Topology building, compiled with Topology's own compile.py: the
-    entities the diagram needs, and storage points only as counts."""
+    entities the diagram and the AutomationML export need. Storage points come
+    separately as `points`: the diagram only counts them."""
     import glob
     import json
 
@@ -165,6 +168,8 @@ def compile_buildings():
                 name=((entities.get("warehouse") or [{}])[0]).get("name"),
                 entities={kind: entities.get(kind) or [] for kind in DIAGRAM_KINDS},
                 point_counts=counts,
+                points=entities.get("storage_point") or [],
+                dataset=(data.get("metadata") or {}).get("dataset_id"),
             )
         buildings.append(building)
     return json.dumps(buildings, default=str)

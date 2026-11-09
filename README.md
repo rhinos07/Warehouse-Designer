@@ -11,7 +11,7 @@ It runs without a server and is published with GitHub Pages:
 
 Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
-## Status: phase 5, all planned phases built (simulation left open)
+## Status: phase 5, all planned phases built (simulation left open), plus an AutomationML export prototype
 
 - **Open a folder** with YAML definitions and check it with the repos' own
   validators: each repo's `tools/validate.py` per customer,
@@ -85,6 +85,33 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
   All texts live in `src/i18n.tsx`, one table per language. The unit test
   checks that both tables have the same entries and placeholders.
+- **AutomationML export (prototype).** "AutomationML exportieren" in the
+  topology tab downloads the selected hall, as compiled at that moment and
+  with unsaved edits, as a CAEX 3.0 file (`.aml`). Planning, layout and
+  simulation tools that read AutomationML (IEC 62714) can open it
+  (`src/automationml.ts`). What the file contains:
+  - **hierarchy:** company → facility → building → storage types →
+    sections → storage points;
+  - **other places:** doors, work centers and reporting points;
+  - **devices:** controllers and equipment;
+  - **connections:** each physical connection is an element with one port
+    per end, linked to a port of each place;
+  - **activity areas:** groups of mirror objects;
+  - **templates:** equipment types, workstation templates and lane
+    templates, as system unit classes.
+
+  The roles come from the project's own role class library, and each derives
+  from an AutomationML base role. Each role's description names the standard
+  role it corresponds to, following Warehouse-as-Code's
+  `docs/standards-crosswalk.md`.
+
+  What the file leaves out:
+  - movement rules, because AutomationML has no place for rules;
+  - the aisle, bay and shelf level.
+
+  Ids are derived from the data, so exporting the same data twice gives the
+  same file. The example halls' exports were checked against the official
+  CAEX 3.0 XSD (see [`docs/concept.md`](docs/concept.md)).
 - **Review and save:** unsaved edits are listed with a diff per file.
   - "In Ordner speichern" writes them back into the opened folder (Edge and
     Chrome). It refuses if a file changed on disk in the meantime.

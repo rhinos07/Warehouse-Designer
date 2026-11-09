@@ -13,6 +13,8 @@
 //    validate.py and flagged in the diagram.
 // 9. The language switch: English for an English browser, German on a
 //    click, kept across a reload; findings in the tools' own English.
+// 10. AutomationML export of an edited hall: the new elements are in it, and
+//     every reference in the file resolves (checked with the browser's XML parser).
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -79,6 +81,44 @@ async function editAndValidate(page, action) {
   return page.locator("[data-validation]").getAttribute("data-validation");
 }
 
+/** Problems of a CAEX file: XML errors, duplicate ids, links to missing ports, unknown roles. Runs in the page. */
+function amlProblems(xml) {
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  if (doc.querySelector("parsererror")) return ["not well-formed XML"];
+  const problems = [];
+  const ids = new Map();
+  for (const e of doc.querySelectorAll("[ID]")) {
+    if (ids.has(e.getAttribute("ID"))) problems.push(`duplicate ID ${e.getAttribute("ID")}`);
+    ids.set(e.getAttribute("ID"), e);
+  }
+  const classes = new Set();
+  const walk = (node, prefix) => {
+    for (const c of node.children) {
+      if (["RoleClass", "InterfaceClass", "SystemUnitClass", "AttributeType"].includes(c.localName)) {
+        classes.add(`${prefix}/${c.getAttribute("Name")}`);
+        walk(c, `${prefix}/${c.getAttribute("Name")}`);
+      }
+    }
+  };
+  for (const lib of doc.documentElement.children) if (lib.localName.endsWith("Lib")) walk(lib, lib.getAttribute("Name"));
+  for (const e of doc.querySelectorAll("RoleRequirements, SupportedRoleClass, ExternalInterface")) {
+    const ref = e.getAttribute("RefBaseRoleClassPath") ?? e.getAttribute("RefRoleClassPath") ?? e.getAttribute("RefBaseClassPath");
+    if (!classes.has(ref)) problems.push(`unknown class ${ref}`);
+  }
+  for (const e of doc.querySelectorAll("InternalElement[RefBaseSystemUnitPath]")) {
+    const ref = e.getAttribute("RefBaseSystemUnitPath");
+    if (!classes.has(ref) && !ids.has(ref)) problems.push(`unknown system unit or master ${ref}`);
+  }
+  for (const link of doc.querySelectorAll("InternalLink")) {
+    for (const side of ["RefPartnerSideA", "RefPartnerSideB"]) {
+      const [owner, ...name] = link.getAttribute(side).split(":");
+      const ports = [...(ids.get(owner)?.children ?? [])].filter((c) => c.localName === "ExternalInterface").map((c) => c.getAttribute("Name"));
+      if (!ports.includes(name.join(":"))) problems.push(`link ${link.getAttribute("Name")}: no port ${link.getAttribute(side)}`);
+    }
+  }
+  return problems;
+}
+
 async function openHall(page, hall) {
   await page.getByRole("tab", { name: "Topologie" }).click();
   const select = page.locator(".topo-toolbar select");
@@ -133,6 +173,17 @@ async function editTests(browser) {
     await page.getByRole("button", { name: "Hinzufügen" }).click();
   });
   check(state === "ok" && (await page.locator('[data-node="RP_01"]').isVisible()), "a new reporting point passes validate.py");
+
+  // AutomationML export of the edited hall.
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "AutomationML exportieren" }).click()]);
+  const xml = fs.readFileSync(await download.path(), "utf8");
+  check(download.suggestedFilename() === "example_customer_PA11_hall_3.aml", `the export is named after the hall (${download.suggestedFilename()})`);
+  const problems = await page.evaluate(amlProblems, xml);
+  check(problems.length === 0, `the AutomationML file is well-formed and every reference in it resolves${problems.length ? `: ${problems.slice(0, 5).join("; ")}` : ""}`);
+  check(xml.includes('<InternalElement Name="DOOR_04"') && xml.includes('<InternalElement Name="MAN_DOOR_04_TO_STAGING"') && xml.includes('<InternalElement Name="WC_QUALITY_CHECK_01"'),
+    "the export contains the unsaved new door, connection and work center");
+  check((xml.match(/<InternalElement Name="HBR\.[^"]+"/g) ?? []).length > 100, "storage points are exported one by one");
+  check(/Bewegungsregeln sind nicht enthalten/.test(await page.locator("[data-aml-result]").textContent()), "the page says what the export leaves out");
 
   const diff = await page.locator("[data-changes]").textContent();
   check(diff.includes("4 ungespeicherte Änderungen in 3 Dateien"), "the changes panel counts edits and files");
