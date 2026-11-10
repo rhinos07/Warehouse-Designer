@@ -5,6 +5,8 @@ import { addBuilding, proposeKind, readAml, toTopology } from "../src/amlImport"
 import { stableId, toAutomationML } from "../src/automationml";
 import { parseXml, XmlError } from "../src/xml";
 import { describePath, explain } from "../src/findings";
+import { floorPlan, metres } from "../src/floorplan";
+import { buildGraph } from "../src/graph";
 import { flowModel, reachability, seconds, verdict } from "../src/flow";
 import { prepareFlow, Simulation } from "../src/simulation";
 import { TEXTS } from "../src/i18n";
@@ -430,6 +432,47 @@ check(empty.snapshot().flows[0].done === 0 && empty.snapshot().flows[0].waitingT
 const full = new Simulation(fm, flowHall.point_counts!, { flows: [{ from: "IN", to: "BUF", perHour: 60 }], rules: true, fill: 1, seed: 1 });
 full.advance(3600);
 check(full.snapshot().flows[0].done === 0 && full.snapshot().nodes.get("IN")!.queue > 0, "a full storage type takes nothing; load units wait at the door");
+
+// Hall plan: a rack with 2 rows of 2 bays (2 levels, 2 places side by side),
+// a block storage type without bays or sizes, a door and a connection.
+const rackPoint = (aisle: number, bay: number, level: number, pos: number, extra = {}) => ({
+  id: `RACK.${aisle}-${bay}-${level}-${pos}`, storage_type: "RACK", coordinate: `${aisle}-${bay}-${level}-${pos}`,
+  bay: `RACK.F${aisle}-${bay}`, shelf: `RACK.F${aisle}-${bay}-L0${level}`, storage_condition: "chilled",
+  size: { width: { value: 120, unit: "cm" }, depth: { value: 1, unit: "m" }, height: { value: 0.4, unit: "m" } }, ...extra,
+});
+const rackPoints = [1, 2].flatMap((aisle) => [1, 2].flatMap((bay) => [1, 2].flatMap((level) => [1, 2].map((pos) =>
+  rackPoint(aisle, bay, level, pos, aisle === 2 && bay === 1 && level === 1 && pos === 2 ? { blocked: true, blocked_reason: "OBSTRUCTION" } : {})))));
+const planHall = {
+  path: "plan-test", ok: true,
+  points: [...rackPoints, ...[1, 2, 3].map((n) => ({ id: `FLOOR.B${n}`, storage_type: "FLOOR", coordinate: `B${n}` }))],
+  point_counts: { RACK: 16, FLOOR: 3 },
+  entities: {
+    storage_type: [{ id: "RACK", access_model: "rack" }, { id: "FLOOR", access_model: "block" }],
+    door: [{ id: "GATE", direction: "inbound" }],
+    bay: [1, 2].flatMap((aisle) => [1, 2].map((bay) => ({ id: `RACK.F${aisle}-${bay}`, storage_type: "RACK", aisle, bay }))),
+    shelf: [1, 2].flatMap((aisle) => [1, 2].flatMap((bay) => [1, 2].map((level) => ({ id: `RACK.F${aisle}-${bay}-L0${level}`, bay: `RACK.F${aisle}-${bay}`, level })))),
+    can_edge: [{ id: "connection:C1:GATE:RACK", from: "GATE", to: "RACK", source_type: "connection", source_id: "C1", transport_mode: "forklift" }],
+  },
+} as unknown as Building;
+const plan = floorPlan(planHall, buildGraph(planHall));
+check(metres({ value: 120, unit: "cm" }) === 1.2 && metres({ value: 0, unit: "m" }) === undefined, "lengths are read in metres");
+const rack = plan.blocks.find((b) => b.id === "RACK")!;
+const floor = plan.blocks.find((b) => b.id === "FLOOR")!;
+check(rack.cells.length === 4 && rack.rows.length === 2 && !rack.flat, "a rack is drawn as its rows and bays");
+const firstBay = rack.cells.find((c) => c.id === "RACK.F1-1")!;
+check(firstBay.levels === 2 && firstBay.positions === 2 && firstBay.points.length === 4, "a bay knows its levels, places side by side and places");
+check(firstBay.width === Math.round(2 * 1.2 * 26) && firstBay.height === 26 && !firstBay.assumed, "a bay's footprint follows the places' size");
+check(firstBay.condition === "chilled" && rack.cells.find((c) => c.id === "RACK.F2-1")!.blocked === 1, "a bay carries its storage condition and blocked places");
+check(floor.flat && floor.cells.length === 3 && floor.cells.every((c) => c.assumed) && plan.assumed === 3, "places without bay and size are drawn one by one, at the assumed size");
+check(plan.flatRacks.length === 0, "a block storage type without bays is not reported as a rack without bays");
+const inside = (b: { x: number; y: number; width: number; height: number }) =>
+  b.x >= 0 && b.y >= 0 && b.x + b.width <= plan.hall.width && b.y + b.height <= plan.hall.height;
+const apart = (a: typeof rack, b: typeof rack) => a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y;
+check(plan.blocks.every(inside) && apart(rack, floor), "the blocks lie inside the hall and do not overlap");
+check(rack.cells.every((c) => c.x >= 0 && c.y >= 0 && c.x + c.width <= rack.width && c.y + c.height <= rack.height), "the bays lie inside their block");
+const gate = plan.spots.find((s) => s.id === "GATE")!;
+check(gate.kind === "door" && gate.y < plan.hall.height && gate.y + gate.height > plan.hall.height, "a door sits in the hall's wall");
+check(plan.links.length === 1 && plan.links[0].from === "GATE" && plan.links[0].to === "RACK", "a physical connection is drawn between its ends");
 
 console.log(failures.length ? `\n${failures.length} failure(s)` : "\nall unit checks passed");
 process.exit(failures.length ? 1 : 0);
