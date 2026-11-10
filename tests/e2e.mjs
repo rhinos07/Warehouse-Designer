@@ -23,7 +23,9 @@
 //     and a simulated 8 h run of the default flows; turning the rules off
 //     lets a flow into the explicit_only HBR run.
 // 13. The hall plan: hall 3 in top view with HBR's 48 bays, a bay's levels
-//     with its blocked place, and the AutoStore hall.
+//     with its blocked place, and the AutoStore hall. Hall 3 stands as its
+//     layout data says; a hall without layout data is calculated, then its
+//     layout is adopted, a storage type dragged and the hall's size set.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -540,7 +542,6 @@ async function hallPlanTests(browser) {
   check((await page.locator('[data-plan-block="HAZMAT_A"] .plan-cell.hazmat').count()) === 8, "hazardous goods places are marked");
   check((await page.locator("[data-plan-spot]").count()) === 8, "doors, work centers and reporting points are in the plan");
   check((await page.locator("[data-plan-link]").count()) > 5, "the physical connections are drawn");
-  check((await page.locator("[data-plan-note]").textContent()).includes("berechnet"), "the plan says that the arrangement is calculated");
   check(await page.locator('[data-plan-cell="HBR.F03-02"]').evaluate((e) => e.classList.contains("blocked")), "the bay with a blocked place is marked");
   await page.locator('[data-plan-cell="HBR.F03-02"]').click();
   const details = page.locator('[data-plan-details="HBR.F03-02"]');
@@ -548,6 +549,46 @@ async function hallPlanTests(browser) {
   check(await details.locator('[data-plan-place="HBR.03-04-01"]').evaluate((e) => e.classList.contains("blocked")), "the blocked place is red in the side view");
   await page.locator('[data-plan-block="HBR"] .plan-title').click();
   check(await page.locator('[data-details="HBR"]').isVisible(), "clicking a block shows the storage type's data");
+  check((await page.locator('[data-placed="true"]').count()) === 17 && (await page.locator('[data-placed="false"]').count()) === 0,
+    "hall 3's 9 storage types and 8 doors and stations stand where the data places them");
+  check((await page.locator("[data-plan-note]").textContent()).includes("Lage aus den Daten"), "the plan says that the layout comes from the data");
+  const hbr = await page.locator('[data-plan-block="HBR"]').boundingBox();
+  const flex = await page.locator('[data-plan-block="HBR_FLEX"]').boundingBox();
+  check(Math.abs(hbr.height / hbr.width - 40 / 12) < 0.05 && flex.x > hbr.x + hbr.width, "HBR is drawn 12 x 40 m, with HBR_FLEX to its right");
+
+  // A hall without layout data: calculated, then adopted and edited.
+  await pick("/ LP01 /");
+  await page.locator("[data-plan-block]").first().waitFor();
+  check((await page.locator("[data-plan-note]").textContent()).includes("berechnet"), "a hall without layout data says that the arrangement is calculated");
+  const elements = await page.locator("[data-placed]").count();
+  check((await page.locator('[data-placed="true"]').count()) === 0, "nothing is placed there yet");
+  await page.getByLabel("Bearbeiten").check();
+  const adopted = await editAndValidate(page, () => page.locator("[data-plan-adopt]").click());
+  check((await page.locator('[data-placed="true"]').count()) === elements, "adopting the layout places every element");
+  check(adopted === "ok", "the adopted layout passes validate.py");
+  const first = page.locator("[data-plan-block]").first();
+  const firstId = await first.getAttribute("data-plan-block");
+  await first.scrollIntoViewIfNeeded();
+  const handle = await first.locator(".plan-title").boundingBox();
+  const before = await first.boundingBox();
+  // To the right, into the gap to the next block: far enough for the 0.5 m grid at any zoom.
+  await editAndValidate(page, async () => {
+    await page.mouse.move(handle.x + 8, handle.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + 8 + 24, handle.y + 4, { steps: 6 });
+    await page.mouse.up();
+  });
+  const after = await page.locator(`[data-plan-block="${firstId}"]`).boundingBox();
+  check(after.x > before.x + 3, `dragging moves ${firstId} in the plan`);
+  check((await page.locator("[data-changes]").textContent()).includes(`${firstId} im Hallenplan platziert`), "the move is in the change log");
+  await page.locator("[data-plan-hall-width]").fill("5");
+  await page.locator("[data-plan-hall-depth]").fill("5");
+  const small = await editAndValidate(page, () => page.locator("[data-plan-set-hall]").click());
+  check(small === "failed" && (await page.locator("[data-validation]").textContent()).includes("außerhalb der Halle"),
+    "a hall that is too small fails validate.py, in project language");
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await waitForCompile(page);
+
   await pick("/ AS01 /");
   await page.locator("[data-plan-block]").first().waitFor();
   check((await page.locator("[data-plan-block]").count()) > 0, "the AutoStore hall has a plan too");

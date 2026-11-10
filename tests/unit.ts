@@ -5,6 +5,7 @@ import { addBuilding, proposeKind, readAml, toTopology } from "../src/amlImport"
 import { stableId, toAutomationML } from "../src/automationml";
 import { parseXml, XmlError } from "../src/xml";
 import { describePath, explain } from "../src/findings";
+import { adoptPlan, placeSpot, placeStorageType, setLayout } from "../src/editor";
 import { floorPlan, metres } from "../src/floorplan";
 import { buildGraph } from "../src/graph";
 import { flowModel, reachability, seconds, verdict } from "../src/flow";
@@ -433,6 +434,17 @@ const full = new Simulation(fm, flowHall.point_counts!, { flows: [{ from: "IN", 
 full.advance(3600);
 check(full.snapshot().flows[0].done === 0 && full.snapshot().nodes.get("IN")!.queue > 0, "a full storage type takes nothing; load units wait at the door");
 
+// Layout findings of Topology-as-Code's validate.py, in project language.
+const layoutFile = "Topology-as-Code/customers/example_customer/facilities/facility_pa11/buildings/hall_3/structure/storage.yaml";
+const layoutFindings = [
+  "storage_type 'HBR': footprint (2..22 m, 4..44 m) lies outside warehouse.layout (20 m x 50 m)",
+  "storage_type 'HBR_FLEX': footprint overlaps the footprint of storage_type 'HBR'",
+  "door 'DOOR_01': position (61 m, 0 m) lies outside warehouse.layout (60 m x 50 m)",
+  "storage_type 'HBR': exception '01-01-06': position (20 m, 3 m) lies outside the storage_type's footprint (2..14 m, 4..44 m)",
+].map((line) => explain(`${layoutFile}: ${line}`, "de"));
+check(layoutFindings.every((f) => f.translated) && layoutFindings[1].text === "Die Fläche überlappt die Fläche des Lagertyps „HBR“." && layoutFindings[1].subject === "Lagertyp HBR_FLEX",
+  `the layout findings are translated (${layoutFindings.map((f) => f.text).join(" | ")})`);
+
 // Hall plan: a rack with 2 rows of 2 bays (2 levels, 2 places side by side),
 // a block storage type without bays or sizes, a door and a connection.
 const rackPoint = (aisle: number, bay: number, level: number, pos: number, extra = {}) => ({
@@ -473,6 +485,48 @@ check(rack.cells.every((c) => c.x >= 0 && c.y >= 0 && c.x + c.width <= rack.widt
 const gate = plan.spots.find((s) => s.id === "GATE")!;
 check(gate.kind === "door" && gate.y < plan.hall.height && gate.y + gate.height > plan.hall.height, "a door sits in the hall's wall");
 check(plan.links.length === 1 && plan.links[0].from === "GATE" && plan.links[0].to === "RACK", "a physical connection is drawn between its ends");
+check(!plan.real && !plan.waiting && plan.blocks.every((b) => !b.placed), "without layout data the plan is calculated");
+
+// The same hall with a layout: the rack has a footprint, the door a position; the floor storage has none.
+const len = (value: number) => ({ value, unit: "m" });
+const realHall = JSON.parse(JSON.stringify(planHall)) as Building;
+realHall.entities!.warehouse = [{ id: "h", layout: { width: len(40), depth: len(20) } }];
+realHall.entities!.storage_type[0].footprint = { position: { x: len(2), y: len(4) }, width: len(10), depth: { value: 600, unit: "cm" } };
+realHall.entities!.door[0].position = { x: len(20), y: len(20) };
+const real = floorPlan(realHall, buildGraph(realHall));
+const realRack = real.blocks.find((b) => b.id === "RACK")!;
+check(real.real && real.layout?.width === 40 && real.hall.width === 40 * 26 && real.hall.height === 20 * 26, "the hall takes its size from warehouse.layout");
+check(realRack.placed && realRack.x === 52 && realRack.y === 104 && realRack.width === 260 && realRack.height === 156, "a storage type is drawn at its footprint");
+check(realRack.cells.length === 4 && realRack.cells.every((c) => c.x >= 0 && c.y >= 0 && c.x + c.width <= realRack.width + 0.5 && c.y + c.height <= realRack.height + 0.5),
+  "its bays are spread over the footprint");
+const realGate = real.spots.find((sp) => sp.id === "GATE")!;
+check(realGate.placed && realGate.x + realGate.width / 2 === 520 && realGate.y + realGate.height / 2 === 520, "a door is drawn centered on its position");
+const realFloor = real.blocks.find((b) => b.id === "FLOOR")!;
+check(!realFloor.placed && real.waiting !== undefined && realFloor.x >= real.hall.width && realFloor.x >= real.waiting.x, "a storage type without footprint waits beside the hall");
+
+// Layout edits on the example data's files.
+const lp01 = "customers/example_3pl/facilities/facility_lp01/buildings/hall_1/";
+const lpFiles: Record<string, string> = Object.fromEntries(Object.entries(topology).filter(([path]) => path.startsWith(lp01)));
+const lpBuilding = {
+  path: `${lp01}warehouse.yaml`, ok: true,
+  sources: { "storage.yaml": `${lp01}structure/storage.yaml`, "wcs.yaml": `${lp01}structure/wcs.yaml`, "lanes.yaml": `${lp01}structure/lanes.yaml` },
+} as unknown as Building;
+const lpStorage = readYaml(lpFiles[`${lp01}structure/storage.yaml`]) as { storage_types: { id: string }[]; doors: { id: string }[] };
+const [firstType, firstDoor] = [lpStorage.storage_types[0].id, lpStorage.doors[0].id];
+const placed = placeStorageType(lpBuilding, lpFiles, firstType, { x: 3.3, y: 0.2, width: 9.1, depth: 4 });
+const placedType = (readYaml(placed.text).storage_types as { id: string; footprint?: unknown }[]).find((st) => st.id === firstType)!;
+check(JSON.stringify(placedType.footprint) === JSON.stringify({ position: { x: len(3.5), y: len(0) }, width: len(9.5), depth: len(4) }),
+  `placing a storage type writes its footprint on the 0.5 m grid (${JSON.stringify(placedType.footprint)})`);
+check(changedLines(lpFiles[placed.path], placed.text) <= 6, "placing changes only the footprint's lines");
+const doorMove = placeSpot(lpBuilding, lpFiles, "door", firstDoor, { x: 12.24, y: 30 });
+check(JSON.stringify((readYaml(doorMove.text).doors as { id: string; position?: unknown }[]).find((d) => d.id === firstDoor)!.position) === JSON.stringify({ x: len(12), y: len(30) }),
+  "placing a door writes its position");
+const hallSet = setLayout(lpBuilding, lpFiles, { width: 59.6, depth: 40 });
+check(JSON.stringify((readYaml(hallSet.text).warehouse as { layout?: unknown }).layout) === JSON.stringify({ width: len(60), depth: len(40) }), "the hall's size is written to warehouse.yaml");
+const adopted = adoptPlan(lpBuilding, lpFiles, { ...plan, blocks: plan.blocks.map((b, i) => ({ ...b, id: lpStorage.storage_types[i].id })), spots: plan.spots.map((sp) => ({ ...sp, id: firstDoor })) });
+const adoptedStorage = readYaml(adopted.find((c) => c.path.endsWith("storage.yaml"))!.text) as { storage_types: { footprint?: unknown }[]; doors: { position?: unknown }[] };
+check(adopted.length === 2 && adopted.some((c) => c.path.endsWith("warehouse.yaml")) && adoptedStorage.storage_types.filter((st) => st.footprint).length === 2 && Boolean(adoptedStorage.doors[0].position),
+  "adopting a calculated plan writes the hall, every footprint and every position, one change per file");
 
 console.log(failures.length ? `\n${failures.length} failure(s)` : "\nall unit checks passed");
 process.exit(failures.length ? 1 : 0);

@@ -1,10 +1,10 @@
 // The hall plan view of the topology tab: storage types as blocks in top
 // view with their bays and places, doors in the hall's wall, and the physical
 // connections as lines. See floorplan.ts for what is data and what is calculated.
-import { Background, Controls, ReactFlow, ViewportPortal, type Node, type NodeProps } from "@xyflow/react";
+import { Background, Controls, ReactFlow, useNodesState, ViewportPortal, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { createContext, useContext, useMemo } from "react";
-import { metres, type FloorPlan, type PlanBlock, type PlanCell, type PlanSpot } from "./floorplan";
+import { createContext, useContext, useEffect, useMemo } from "react";
+import { metres, PX_PER_M, type FloorPlan, type PlanBlock, type PlanCell, type PlanSpot } from "./floorplan";
 import { subtitle, type TopoNode } from "./graph";
 import { t, tl, tn, useLang } from "./i18n";
 import type { Entity } from "./types";
@@ -37,7 +37,8 @@ function BlockView({ data, selected }: NodeProps<Node<BlockData>>) {
   const { cellId, onCell } = useContext(Context);
   return (
     <div
-      className={`plan-block${selected ? " selected" : ""}${findings ? " has-findings" : ""}`}
+      className={`plan-block${block.placed ? "" : " waiting"}${selected ? " selected" : ""}${findings ? " has-findings" : ""}`}
+      data-placed={block.placed}
       style={{ width: block.width, height: block.height }}
       data-plan-block={block.id}
     >
@@ -53,7 +54,7 @@ function BlockView({ data, selected }: NodeProps<Node<BlockData>>) {
         <button
           key={cell.id}
           type="button"
-          className={`plan-cell nodrag ${conditionClass(cell.condition)}${cell.hazmat ? " hazmat" : ""}${cell.blocked ? " blocked" : ""}${cell.assumed ? " assumed" : ""}${cell.id === cellId ? " chosen" : ""}`}
+          className={`plan-cell ${conditionClass(cell.condition)}${cell.hazmat ? " hazmat" : ""}${cell.blocked ? " blocked" : ""}${cell.assumed ? " assumed" : ""}${cell.id === cellId ? " chosen" : ""}`}
           style={{ left: cell.x, top: cell.y, width: cell.width, height: cell.height }}
           title={cellTitle(cell)}
           data-plan-cell={cell.id}
@@ -76,7 +77,8 @@ function SpotView({ data, selected }: NodeProps<Node<SpotData>>) {
   const { spot, node, findings } = data;
   return (
     <div
-      className={`topo-node plan-spot kind-${spot.kind}${selected ? " selected" : ""}${findings ? " has-findings" : ""}`}
+      className={`topo-node plan-spot kind-${spot.kind}${spot.placed ? "" : " waiting"}${selected ? " selected" : ""}${findings ? " has-findings" : ""}`}
+      data-placed={spot.placed}
       style={{ width: spot.width, height: spot.height }}
       data-plan-spot={spot.id}
     >
@@ -87,16 +89,16 @@ function SpotView({ data, selected }: NodeProps<Node<SpotData>>) {
   );
 }
 
-function HallView({ data }: NodeProps<Node<{ width: number; height: number; name: string }>>) {
+function HallView({ data }: NodeProps<Node<{ width: number; height: number; name: string; open?: boolean }>>) {
   return (
-    <div className="plan-hall" style={{ width: data.width, height: data.height }}>
+    <div className={`plan-hall${data.open ? " open" : ""}`} style={{ width: data.width, height: data.height }}>
       <span>{data.name}</span>
     </div>
   );
 }
 const nodeTypes = { block: BlockView, spot: SpotView, hall: HallView };
 
-export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell }: {
+export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell, editable = false, onMove }: {
   plan: FloorPlan;
   name: string;
   /** The diagram's nodes, for the second line of each block and spot. */
@@ -108,6 +110,9 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
   cellId: string | null;
   onSelect: (id: string | null) => void;
   onCell: (block: string, cell: PlanCell) => void;
+  /** Blocks and spots can be dragged; onMove gets the new upper left corner in plan pixels. */
+  editable?: boolean;
+  onMove?: (id: string, at: { x: number; y: number }) => void;
 }) {
   const lang = useLang();
   const flowNodes = useMemo<Node[]>(() => {
@@ -117,6 +122,13 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
         id: "plan:hall", type: "hall", position: { x: plan.hall.x, y: plan.hall.y }, data: { ...plan.hall, name },
         selectable: false, draggable: false, zIndex: -1, style: { pointerEvents: "none" as const },
       },
+      ...(plan.waiting
+        ? [{
+            id: "plan:waiting", type: "hall", position: { x: plan.waiting.x, y: plan.waiting.y },
+            data: { ...plan.waiting, name: t("plan.waitingTitle"), open: true },
+            selectable: false, draggable: false, zIndex: -1, style: { pointerEvents: "none" as const },
+          }]
+        : []),
       ...plan.blocks.map((block) => ({
         id: block.id, type: "block", position: { x: block.x, y: block.y }, width: block.width, height: block.height,
         data: { block, node: byId.get(block.id), findings: findingsOf(block.id) }, selected: block.id === selectedId,
@@ -128,18 +140,26 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
     ];
   }, [plan, nodes, name, selectedId, findingsOf, lang]);
   const context = useMemo(() => ({ cellId, onCell }), [cellId, onCell]);
+  // While editing, React Flow moves the nodes itself; the data follows on drop.
+  const [live, setLive, onNodesChange] = useNodesState<Node>([]);
+  useEffect(() => setLive(flowNodes), [flowNodes, setLive]);
+  const grid = (PX_PER_M / 2) | 0;
   return (
     <Context.Provider value={context}>
       <ReactFlow
-        nodes={flowNodes}
+        nodes={editable ? live : flowNodes}
+        onNodesChange={editable ? onNodesChange : undefined}
+        snapToGrid={editable}
+        snapGrid={[grid, grid]}
+        onNodeDragStop={(_, n) => editable && !n.id.startsWith("plan:") && onMove?.(n.id, n.position)}
         edges={[]}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.06 }}
         minZoom={0.1}
-        nodesDraggable={false}
+        nodesDraggable={editable}
         nodesConnectable={false}
-        onNodeClick={(_, n) => n.id !== "plan:hall" && onSelect(n.id)}
+        onNodeClick={(_, n) => !n.id.startsWith("plan:") && onSelect(n.id)}
         onPaneClick={() => onSelect(null)}
         proOptions={{ hideAttribution: true }}
       >

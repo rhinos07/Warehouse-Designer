@@ -117,26 +117,41 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   Ids are derived from the data, so exporting the same data twice gives the
   same file. The example halls' exports were checked against the official
   CAEX 3.0 XSD (see [`docs/concept.md`](docs/concept.md)).
-- **Hall plan (prototype, stage 1).** In the topology tab, "Hallenplan"
-  switches from the flow diagram to a top view of the hall
-  (`src/floorplan.ts`, `src/HallPlan.tsx`).
+- **Hall plan (prototype).** In the topology tab, "Hallenplan" switches from
+  the flow diagram to a top view of the hall (`src/floorplan.ts`,
+  `src/HallPlan.tsx`).
   - **From the data:**
     - Each storage type is a block. A rack shows its rows and bays, a
       channel storage its channels' depth, other storage types their places.
-    - The bays and places are drawn to scale from the places' `size`.
     - Colors show the storage condition. Hazardous goods places and bays
       with a blocked place are marked.
-    - Doors sit in the hall's wall. The physical connections are lines,
-      colored by transport mode.
-  - **Calculated, not real:** where the blocks, doors and work centers lie
-    in the hall. The data has no such positions yet. The page says so above
-    the plan.
-  - **Assumed:** the distance between rack rows (1.6 m), and 1.2 × 0.8 m
-    for a place without `size` (drawn dashed).
+    - The physical connections are lines, colored by transport mode.
+  - **Where things stand** comes from Topology-as-Code's layout fields:
+    `warehouse.layout` (the hall's size), a storage type's `footprint`, and
+    a `position` on doors, work centers and reporting points.
+    - With these fields, each element is drawn at its place. The reference
+      point is the upper left corner; x runs to the right, y downwards.
+    - A storage type's rows and bays are spread over its footprint, so they
+      are not to scale there.
+    - Elements without a place wait to the right of the hall.
+    - A hall without any layout field gets a calculated arrangement. The
+      page says above the plan which of the two it shows.
+  - **Editing the layout** ("Bearbeiten" in the hall plan):
+    - "Lage übernehmen" writes the layout as drawn to the files: the hall's
+      size, and a footprint or position for every element without one.
+    - Dragging a block, a door, a work center or a reporting point writes
+      its new place, on a 0.5 m grid.
+    - "Größe setzen" sets the hall's width and depth.
+    - A footprint's width and depth are changed in the element's form
+      ("Alle Attribute bearbeiten …").
+
+    After every change Topology's `validate.py` checks the layout: inside the
+    hall, no overlapping footprints. The findings show in project language.
   - Clicking a bay shows its levels as a side view, with each place and a
     blocked place in red. Clicking a block shows the storage type's data.
-  - Editing stays in the flow diagram.
-  - Stage 2 (planned): real positions, kept in Topology-as-Code's schema.
+  - **Assumed** where the data states nothing: 1.2 × 0.8 m for a place
+    without `size` (drawn dashed), and 1.6 m between rack rows in a
+    calculated arrangement.
 - **Material flow (prototype).** The tab "Materialfluss" shows how load
   units can move through a hall (`src/flow.ts`, `src/simulation.ts`,
   `src/MaterialFlow.tsx`). It opens with hall 3 of `example_customer`.

@@ -2,7 +2,8 @@
 // file; the page then recompiles and revalidates with the repo's own tools.
 import { t } from "./i18n";
 import type { Building } from "./types";
-import { appendItem, EditError, readYaml, removeItem, type Item } from "./yamlEdit";
+import type { FloorPlan } from "./floorplan";
+import { appendItem, EditError, getItem, getTop, readYaml, removeItem, updateItem, updateTop, type Item, type Value } from "./yamlEdit";
 
 export { EditError };
 
@@ -176,4 +177,93 @@ export function sections(building: Building, files: Files): string[] {
   const path = building.sources?.["storage.yaml"];
   if (!path || files[path] === undefined) return [];
   return list(readYaml(files[path]).storage_types).flatMap((st) => list(st.sections).map((sec) => `${st.id}.${sec.id}`));
+}
+
+// Layout edits (Topology-as-Code: warehouse.layout, storage_type.footprint,
+// position on doors, work centers and reporting points). Values are metres,
+// snapped to GRID_M.
+export const GRID_M = 0.5;
+const PLAN_PX_PER_M = 26; // floorplan.ts PX_PER_M
+export const snap = (m: number) => Math.max(0, Math.round(m / GRID_M) * GRID_M);
+const snapUp = (m: number) => Math.max(GRID_M, Math.ceil(m / GRID_M - 1e-9) * GRID_M);
+const m = (value: number): Value => ({ value, unit: "m" });
+
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  depth: number;
+}
+
+function withFootprint(text: string, id: string, box: Box): string {
+  const item = getItem(text, "storage_types", id);
+  return updateItem(text, "storage_types", id, {
+    ...item,
+    footprint: { position: { x: m(snap(box.x)), y: m(snap(box.y)) }, width: m(snapUp(box.width)), depth: m(snapUp(box.depth)) },
+  });
+}
+
+function withPosition(text: string, key: string, id: string, at: { x: number; y: number }): string {
+  const item = getItem(text, key, id);
+  const old = (item.position ?? {}) as Record<string, Value>;
+  // Keep a stated height (z).
+  return updateItem(text, key, id, { ...item, position: { ...old, x: m(snap(at.x)), y: m(snap(at.y)) } });
+}
+
+function withLayout(text: string, size: { width: number; depth: number }): string {
+  return updateTop(text, "warehouse", { ...getTop(text, "warehouse"), layout: { width: m(snapUp(size.width)), depth: m(snapUp(size.depth)) } });
+}
+
+/** Sets the floor area a storage type occupies. */
+export function placeStorageType(building: Building, files: Files, id: string, box: Box): Change {
+  const [path, text] = source(building, files, "storage.yaml");
+  return { path, text: withFootprint(text, id, box), summary: t("editor.placed", { id }), select: id };
+}
+
+/** Sets where a door, work center or reporting point stands (its center). */
+export function placeSpot(building: Building, files: Files, kind: string, id: string, at: { x: number; y: number }): Change {
+  const home = HOME[kind];
+  if (!home || !["door", "work_center", "reporting_point"].includes(kind)) throw new EditError(t("editor.cannotPlace"));
+  const [path, text] = source(building, files, home[0]);
+  return { path, text: withPosition(text, home[1], id, at), summary: t("editor.placed", { id }), select: id };
+}
+
+/** Sets the hall's floor area in warehouse.yaml. */
+export function setLayout(building: Building, files: Files, size: { width: number; depth: number }): Change {
+  const text = files[building.path];
+  if (text === undefined) throw new EditError(t("editor.noImport", { file: "warehouse.yaml" }));
+  if (!(size.width > 0) || !(size.depth > 0)) throw new EditError(t("editor.needSize"));
+  return { path: building.path, text: withLayout(text, size), summary: t("editor.layoutSet", { width: snapUp(size.width), depth: snapUp(size.depth) }) };
+}
+
+/**
+ * Writes the plan as drawn into the files: the hall's size, a footprint for
+ * every storage type and a position for every door, work center and reporting
+ * point that has none yet. One change per file, to be applied together.
+ */
+export function adoptPlan(building: Building, files: Files, plan: FloorPlan): Change[] {
+  const toM = (px: number) => px / PLAN_PX_PER_M;
+  const texts = new Map<string, string>();
+  const edit = (name: string, change: (text: string) => string) => {
+    const [path, original] = name === "warehouse.yaml" ? [building.path, files[building.path]] : source(building, files, name);
+    if (original === undefined) throw new EditError(t("editor.noImport", { file: name }));
+    texts.set(path, change(texts.get(path) ?? original));
+  };
+  const open = [...plan.blocks, ...plan.spots].filter((e) => !e.placed);
+  // Waiting elements are taken where they wait, so the hall has to reach them.
+  const reach = (side: "x" | "y") =>
+    Math.max(side === "x" ? plan.hall.width : plan.hall.height, ...open.map((e) => (side === "x" ? e.x + e.width : e.y + e.height)));
+  const hall = { width: snapUp(toM(reach("x")) + (open.length && plan.real ? 1 : 0)), depth: snapUp(toM(reach("y"))) };
+  if (!plan.layout || hall.width > plan.layout.width || hall.depth > plan.layout.depth) {
+    edit("warehouse.yaml", (text) => withLayout(text, { width: Math.max(hall.width, plan.layout?.width ?? 0), depth: Math.max(hall.depth, plan.layout?.depth ?? 0) }));
+  }
+  for (const b of plan.blocks) {
+    if (!b.placed) edit("storage.yaml", (text) => withFootprint(text, b.id, { x: toM(b.x), y: toM(b.y), width: toM(b.width), depth: toM(b.height) }));
+  }
+  for (const s of plan.spots) {
+    if (s.placed) continue;
+    const at = { x: Math.min(toM(s.x + s.width / 2), hall.width), y: Math.min(toM(s.y + s.height / 2), hall.depth) };
+    edit(HOME[s.kind][0], (text) => withPosition(text, HOME[s.kind][1], s.id, at));
+  }
+  return [...texts].map(([path, text], i) => ({ path, text, summary: i ? "" : t("editor.adopted", { n: open.length }) }));
 }

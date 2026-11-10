@@ -1,10 +1,16 @@
-// The hall plan: a schematic top view of a building, built from the compiled
-// data alone.
-// - What comes from the data: each storage type's inner structure (rack rows,
-//   bays and levels, channels, single places) and the size of its places.
-// - What is calculated: where the storage types, doors and work centers lie
-//   in the hall. The data has no such positions yet (stage 2), so the blocks
-//   are packed into rows; their arrangement is not the real one.
+// The hall plan: a top view of a building, built from the compiled data alone.
+// - Always from the data: each storage type's inner structure (rack rows, bays
+//   and levels, channels, single places) and the size of its places.
+// - The position of things in the hall, in one of two ways:
+//   - real: the building states a layout (warehouse.layout, a storage type's
+//     footprint, a position on doors, work centers and reporting points).
+//     Elements with a place are drawn there; a storage type's inner structure
+//     is spread over its footprint. Elements without a place wait beside the
+//     hall.
+//   - calculated: the building states none of this. The blocks are packed
+//     into rows; their arrangement is not the real one.
+// Screen coordinates: the building's reference point is the upper left
+// corner, x runs to the right, y downwards.
 import type { Graph } from "./graph";
 import type { Building, Entity } from "./types";
 
@@ -67,6 +73,8 @@ export interface PlanBlock {
   points: number;
   /** A storage type whose places have no bay: drawn one cell per place, without levels. */
   flat: boolean;
+  /** Drawn at the footprint the data states. */
+  placed: boolean;
 }
 
 export interface PlanSpot {
@@ -76,6 +84,8 @@ export interface PlanSpot {
   y: number;
   width: number;
   height: number;
+  /** Drawn at the position the data states. */
+  placed: boolean;
 }
 
 export interface PlanLink {
@@ -91,7 +101,13 @@ export interface PlanLink {
 }
 
 export interface FloorPlan {
+  /** True when the building states a layout, a footprint or a position. */
+  real: boolean;
   hall: { x: number; y: number; width: number; height: number };
+  /** The hall's size in metres, if warehouse.layout states it. */
+  layout?: { width: number; depth: number };
+  /** In a real plan: where elements without a place wait, beside the hall. */
+  waiting?: { x: number; y: number; width: number; height: number };
   blocks: PlanBlock[];
   spots: PlanSpot[];
   links: PlanLink[];
@@ -193,10 +209,54 @@ function block(id: string, building: Building, shelves: Map<string, number>): Pl
   const flat = pointCells(loose, racked ? racked.height + (loose.length ? PAD : 0) : HEADER);
   const cells = [...(racked?.cells ?? []), ...flat.cells];
   return {
-    id, x: 0, y: 0, cells, rows: racked?.rows ?? [], points: points.length, flat: !racked,
+    id, x: 0, y: 0, cells, rows: racked?.rows ?? [], points: points.length, flat: !racked, placed: false,
     width: Math.max(190, racked?.width ?? 0, flat.width),
     height: Math.max(58, (loose.length || !racked ? flat.height : racked.height) + PAD),
   };
+}
+
+/** A position's x and y in metres; undefined unless both are readable. */
+export function xyOf(position: unknown): { x: number; y: number } | undefined {
+  if (!position || typeof position !== "object") return undefined;
+  const { x, y } = position as { x?: unknown; y?: unknown };
+  const coordinate = (value: unknown) => {
+    if (!value || typeof value !== "object") return undefined;
+    const { value: v, unit } = value as { value?: unknown; unit?: unknown };
+    const factor = UNIT_M[String(unit)];
+    return typeof v === "number" && v >= 0 && factor ? v * factor : undefined;
+  };
+  const [mx, my] = [coordinate(x), coordinate(y)];
+  return mx === undefined || my === undefined ? undefined : { x: mx, y: my };
+}
+
+/** A footprint as a box in metres; undefined unless it is complete. */
+export function footprintOf(entity: Entity | undefined): { x: number; y: number; width: number; depth: number } | undefined {
+  const footprint = entity?.footprint as { position?: unknown; width?: unknown; depth?: unknown } | undefined;
+  const origin = xyOf(footprint?.position);
+  const [width, depth] = [metres(footprint?.width), metres(footprint?.depth)];
+  return origin && width && depth ? { ...origin, width, depth } : undefined;
+}
+
+/** The hall's size in metres, from warehouse.layout. */
+export function layoutOf(building: Building): { width: number; depth: number } | undefined {
+  const layout = building.entities?.warehouse?.[0]?.layout as { width?: unknown; depth?: unknown } | undefined;
+  const [width, depth] = [metres(layout?.width), metres(layout?.depth)];
+  return width && depth ? { width, depth } : undefined;
+}
+
+/** Moves a block to its footprint and spreads its inner structure over it. */
+function fit(b: PlanBlock, box: { x: number; y: number; width: number; depth: number }) {
+  const [width, height] = [Math.max(24, box.width * PX_PER_M), Math.max(24, box.depth * PX_PER_M)];
+  const fx = width / b.width;
+  // Keep the title line as it is where the footprint leaves room for it.
+  const keep = height > HEADER * 2;
+  const fy = keep ? (height - HEADER) / (b.height - HEADER) : height / b.height;
+  const top = (y: number) => (keep ? HEADER + (y - HEADER) * fy : y * fy);
+  for (const cell of b.cells) {
+    Object.assign(cell, { x: cell.x * fx, y: top(cell.y), width: Math.max(3, cell.width * fx - 1), height: Math.max(3, cell.height * fy - 1) });
+  }
+  for (const row of b.rows) Object.assign(row, { y: top(row.y), height: row.height * fy });
+  Object.assign(b, { x: box.x * PX_PER_M, y: box.y * PX_PER_M, width, height, placed: true });
 }
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -210,12 +270,91 @@ function edgeOf(box: Box, tx: number, ty: number) {
   return { x: cx + dx * scale, y: cy + dy * scale };
 }
 
+function links(graph: Graph, boxes: Map<string, Box>): PlanLink[] {
+  const out: PlanLink[] = [];
+  for (const edge of graph.can) {
+    const [a, b] = [boxes.get(edge.source), boxes.get(edge.target)];
+    if (!a || !b) continue;
+    const start = edgeOf(a, b.x + b.width / 2, b.y + b.height / 2);
+    const end = edgeOf(b, a.x + a.width / 2, a.y + a.height / 2);
+    out.push({ id: edge.id, from: edge.source, to: edge.target, mode: edge.mode, both: edge.both, x1: start.x, y1: start.y, x2: end.x, y2: end.y });
+  }
+  return out;
+}
+
+const SPOT_KINDS = [["door", "door"], ["work_center", "work_center"], ["reporting_point", "reporting_point"]] as const;
+
 export function floorPlan(building: Building, graph: Graph): FloorPlan {
   const entities = building.entities ?? {};
   const shelves = new Map<string, number>();
   for (const shelf of entities.shelf ?? []) shelves.set(String(shelf.bay), (shelves.get(String(shelf.bay)) ?? 0) + 1);
-  const blocks = (entities.storage_type ?? []).map((st) => block(st.id, building, shelves));
+  const types = entities.storage_type ?? [];
+  const blocks = types.map((st) => block(st.id, building, shelves));
+  const kinds = new Map(types.map((st) => [st.id, st]));
+  const notes = () => ({
+    assumed: blocks.reduce((sum, b) => sum + b.cells.filter((c) => c.assumed).reduce((n, c) => n + c.points.length, 0), 0),
+    flatRacks: blocks.filter((b) => b.flat && b.points > 1 && kinds.get(b.id)?.access_model === "rack").map((b) => b.id),
+  });
 
+  const layout = layoutOf(building);
+  const footprints = new Map(types.map((st) => [st.id, footprintOf(st)]));
+  const positions = new Map(SPOT_KINDS.flatMap(([kind]) => (entities[kind] ?? []).map((e) => [e.id, xyOf(e.position)] as const)));
+  const real = Boolean(layout) || [...footprints.values(), ...positions.values()].some(Boolean);
+  if (!real) return calculated(building, graph, blocks, notes);
+
+  const spots: PlanSpot[] = [];
+  for (const [kind] of SPOT_KINDS) {
+    for (const e of entities[kind] ?? []) {
+      const at = positions.get(e.id);
+      spots.push({
+        id: e.id, kind, ...SPOT, placed: Boolean(at),
+        x: at ? at.x * PX_PER_M - SPOT.width / 2 : 0, y: at ? at.y * PX_PER_M - SPOT.height / 2 : 0,
+      });
+    }
+  }
+  for (const b of blocks) {
+    const box = footprints.get(b.id);
+    if (box) fit(b, box);
+  }
+  const placed = [...blocks, ...spots].filter((e) => e.placed);
+  // Without warehouse.layout, the hall is what its placed elements cover.
+  const hall = layout
+    ? { x: 0, y: 0, width: layout.width * PX_PER_M, height: layout.depth * PX_PER_M }
+    : {
+        x: 0, y: 0,
+        width: Math.max(SPOT.width, ...placed.map((e) => e.x + e.width)) + GAP,
+        height: Math.max(SPOT.height, ...placed.map((e) => e.y + e.height)) + GAP,
+      };
+
+  // Elements without a place wait in a column beside the hall.
+  const open = [...blocks, ...spots].filter((e) => !e.placed);
+  let waiting: FloorPlan["waiting"];
+  if (open.length) {
+    const left = Math.max(hall.width, ...placed.map((e) => e.x + e.width)) + GAP * 2;
+    const limit = Math.max(hall.height, ...open.map((e) => e.height));
+    let [x, y, columnWidth] = [left + PAD, HEADER + PAD, 0];
+    for (const e of open) {
+      if (y > HEADER + PAD && y + e.height > limit) {
+        x += columnWidth + GAP / 2;
+        y = HEADER + PAD;
+        columnWidth = 0;
+      }
+      Object.assign(e, { x, y });
+      y += e.height + GAP / 2;
+      columnWidth = Math.max(columnWidth, e.width);
+    }
+    waiting = {
+      x: left, y: 0, width: x + columnWidth + PAD - left,
+      height: Math.max(...open.map((e) => e.y + e.height)) + PAD,
+    };
+  }
+  const boxes = new Map<string, Box>([...blocks, ...spots].map((b) => [b.id, b]));
+  return { real: true, hall, layout, waiting, blocks, spots, links: links(graph, boxes), ...notes() };
+}
+
+/** The plan of a building without any layout data: blocks packed into rows. */
+function calculated(building: Building, graph: Graph, blocks: PlanBlock[], notes: () => { assumed: number; flatRacks: string[] }): FloorPlan {
+  const entities = building.entities ?? {};
   // Pack the blocks into rows of about this width: a hall wider than deep, as the page is.
   const area = blocks.reduce((sum, b) => sum + (b.width + GAP) * (b.height + GAP), 0);
   const limit = Math.max(...blocks.map((b) => b.width), Math.sqrt(area * 3), 3 * SPOT.width);
@@ -239,7 +378,7 @@ export function floorPlan(building: Building, graph: Graph): FloorPlan {
     const total = items.length * SPOT.width + Math.max(0, items.length - 1) * GAP;
     let left = GAP + Math.max(0, (Math.max(inner - GAP, total + GAP) - GAP - total) / 2);
     for (const item of items) {
-      spots.push({ id: item.id, kind, x: left, y: top, ...SPOT });
+      spots.push({ id: item.id, kind, x: left, y: top, ...SPOT, placed: false });
       left += SPOT.width + GAP;
     }
     inner = Math.max(inner, left);
@@ -259,18 +398,5 @@ export function floorPlan(building: Building, graph: Graph): FloorPlan {
   hall.width = Math.max(hall.width, inner);
 
   const boxes = new Map<string, Box>([...blocks, ...spots].map((b) => [b.id, b]));
-  const links: PlanLink[] = [];
-  for (const edge of graph.can) {
-    const [a, b] = [boxes.get(edge.source), boxes.get(edge.target)];
-    if (!a || !b) continue;
-    const start = edgeOf(a, b.x + b.width / 2, b.y + b.height / 2);
-    const end = edgeOf(b, a.x + a.width / 2, a.y + a.height / 2);
-    links.push({ id: edge.id, from: edge.source, to: edge.target, mode: edge.mode, both: edge.both, x1: start.x, y1: start.y, x2: end.x, y2: end.y });
-  }
-  const kinds = new Map((entities.storage_type ?? []).map((st) => [st.id, st]));
-  return {
-    hall, blocks, spots, links,
-    assumed: blocks.reduce((sum, b) => sum + b.cells.filter((c) => c.assumed).reduce((n, c) => n + c.points.length, 0), 0),
-    flatRacks: blocks.filter((b) => b.flat && b.points > 1 && kinds.get(b.id)?.access_model === "rack").map((b) => b.id),
-  };
+  return { real: false, hall, blocks, spots, links: links(graph, boxes), ...notes() };
 }

@@ -300,3 +300,7 @@ code.readonly { padding: 4px 0; }
 .plan-variant { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
 .plan-place { border: 1px solid #8a94a3; border-radius: 2px; padding: 2px 5px; font-size: 11px; font-variant-numeric: tabular-nums; background: color-mix(in srgb, #8a94a3 12%, var(--surface)); }
 .plan-place.blocked { border-color: var(--bad); background: var(--bad-bg); color: var(--bad); }
+.plan-hall.open { border-style: dashed; border-width: 2px; background: transparent; }
+.plan-block.waiting, .plan-spot.waiting { border-style: dashed; opacity: 0.85; }
+.plan-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.plan-actions input[type="number"] { width: 70px; }
