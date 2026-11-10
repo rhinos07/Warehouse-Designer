@@ -142,8 +142,8 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
     - Dragging a block, a door, a work center or a reporting point writes
       its new place, on a 0.5 m grid.
     - "Größe setzen" sets the hall's width and depth.
-    - A footprint's width and depth are changed in the element's form
-      ("Alle Attribute bearbeiten …").
+    - Dragging a corner or an edge of a block changes its footprint's
+      size, on the same grid. The smallest footprint is 1 × 1 m.
 
     After every change Topology's `validate.py` checks the layout: inside the
     hall, no overlapping footprints. The findings show in project language.
