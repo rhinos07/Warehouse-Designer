@@ -22,7 +22,7 @@ import { buildGraph, findingsFor, kindLabel, modeLabel, MODES, subtitle, type No
 import { t, tl, useLang } from "./i18n";
 import type { Building, Catalog, Entity } from "./types";
 
-const EDGE_COLOR: Record<string, string> = {
+export const EDGE_COLOR: Record<string, string> = {
   conveyor: "#2f6fdb",
   lane: "#1f8a8a",
   forklift: "#d9822b",

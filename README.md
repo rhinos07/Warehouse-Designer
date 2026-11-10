@@ -11,7 +11,7 @@ It runs without a server and is published with GitHub Pages:
 
 Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
-## Status: phase 5, all planned phases built (simulation left open), plus an AutomationML export and import prototype
+## Status: phase 5, all planned phases built, plus prototypes for AutomationML export and import and a material flow simulation
 
 - **Open a folder** with YAML definitions and check it with the repos' own
   validators: each repo's `tools/validate.py` per customer,
@@ -117,6 +117,48 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   Ids are derived from the data, so exporting the same data twice gives the
   same file. The example halls' exports were checked against the official
   CAEX 3.0 XSD (see [`docs/concept.md`](docs/concept.md)).
+- **Material flow (prototype).** The tab "Materialfluss" shows how load
+  units can move through a hall (`src/flow.ts`, `src/simulation.ts`,
+  `src/MaterialFlow.tsx`). It opens with hall 3 of `example_customer`.
+  - **Reachability (stage 1):** a table for each inbound door to each storage
+    type, and for each storage type to each outbound door. Each row tells:
+    - **path ("kann"):** the quickest path over the physical connections,
+      with its travel time;
+    - **rules ("darf"):** whether the movement rules allow the move, and
+      which rule decides.
+
+    Clicking a row marks the path in the diagram. Storage types without any
+    connection are listed. So are doors whose staging section has no
+    connection to the door.
+  - **Simulation (stage 2):** flows such as "DOOR_01 → FIX, 20 per hour" or
+    "FIX → via WC_PACK_01 → DOOR_02". Load units arrive at random (seeded,
+    so a run can be repeated) and move as dots along the diagram's
+    connections. "Start" plays the simulation (10× to 1200× speed);
+    "8 h rechnen" calculates 8 hours at once.
+
+    The simulation shows, per flow, the throughput per hour and the mean
+    lead time. Per station it shows the queue, how busy the station is and
+    the stock. A station that is 85 % busy or more is marked red as the
+    bottleneck.
+  - **What limits the flow:**
+    - a work center's `throughput_capacity`;
+    - a reporting point's `capacity`;
+    - a conveyor segment's `capacity`;
+    - the main conveyor's `capacity_units_per_hour`;
+    - the number of storage points of a storage type: a flow into a full
+      storage type waits, and a flow out of an empty one waits.
+  - **Assumptions:**
+    - A connection without `expected_duration` gets a default travel time
+      per transport mode.
+    - Vehicles and staff are not limited.
+    - The rules are checked from start to target of a move, not at each
+      node on the way. A storage type with `explicit_only` needs a rule
+      that names it.
+    - Sections and activity areas in a rule are shown as a note only.
+
+    The checkbox "Bewegungsregeln beachten" turns the rule check off, so
+    only the physical connections count. The results show where the flow
+    jams. They are not a capacity calculation.
 - **AutomationML import (prototype).** "AutomationML importieren …" in the
   topology tab turns an `.aml` file into a new hall (`src/amlImport.ts`).
   The file can come from a layout planner or from this page's own export.
