@@ -185,6 +185,14 @@ export function TopologyView({ buildings, findings, files, onChange, onChanges, 
     });
   }
 
+  /** A block was resized by its handles to `box` (plan pixels): write its footprint. */
+  function resizePlan(id: string, box: { x: number; y: number; width: number; height: number }) {
+    if (!files) return;
+    attempt(() => placeStorageType(building, files, id, {
+      x: box.x / PX_PER_M, y: box.y / PX_PER_M, width: box.width / PX_PER_M, depth: box.height / PX_PER_M,
+    }));
+  }
+
   const lang = useLang();
   const flowNodes = useMemo<Node<TopoNodeData>[]>(
     () =>
@@ -460,6 +468,7 @@ export function TopologyView({ buildings, findings, files, onChange, onChanges, 
                 name={`${building.name ?? building.building ?? ""}${plan.layout ? ` · ${plan.layout.width} × ${plan.layout.depth} m` : ""}`}
                 editable={planEdit && !busy}
                 onMove={movePlan}
+                onResize={resizePlan}
                 nodes={graph.nodes}
                 findingsOf={findingCount}
                 colors={EDGE_COLOR}

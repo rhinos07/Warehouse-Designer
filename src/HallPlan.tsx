@@ -1,7 +1,7 @@
 // The hall plan view of the topology tab: storage types as blocks in top
 // view with their bays and places, doors in the hall's wall, and the physical
 // connections as lines. See floorplan.ts for what is data and what is calculated.
-import { Background, Controls, ReactFlow, useNodesState, ViewportPortal, type Node, type NodeProps } from "@xyflow/react";
+import { Background, Controls, NodeResizer, ReactFlow, useNodesState, ViewportPortal, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { metres, PX_PER_M, type FloorPlan, type PlanBlock, type PlanCell, type PlanLink, type PlanSpot } from "./floorplan";
@@ -14,11 +14,22 @@ const CONDITIONS = ["ambient", "chilled", "frozen"];
 const conditionClass = (condition: string | undefined) =>
   !condition ? "cond-none" : CONDITIONS.includes(condition) ? `cond-${condition}` : "cond-other";
 
+/** A rectangle in plan pixels. */
+export interface PlanBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 interface PlanContext {
   cellId: string | null;
   onCell: (block: string, cell: PlanCell) => void;
+  /** Set while the layout is edited: a block's footprint can be resized. */
+  onResize?: (id: string, box: PlanBox) => void;
 }
 const Context = createContext<PlanContext>({ cellId: null, onCell: () => {} });
+/** Smallest footprint that can be dragged: 1 m. */
+const MIN_BLOCK = PX_PER_M;
 
 function cellTitle(cell: PlanCell): string {
   const parts = [cell.id];
@@ -53,12 +64,22 @@ type BlockData = { block: PlanBlock; node?: TopoNode; findings: number; badge?: 
 
 function BlockView({ data, selected }: NodeProps<Node<BlockData>>) {
   const { block, node, findings, badge } = data;
-  const { cellId, onCell } = useContext(Context);
+  const { cellId, onCell, onResize } = useContext(Context);
   return (
+    <>
+    {onResize && (
+      <NodeResizer
+        minWidth={MIN_BLOCK}
+        minHeight={MIN_BLOCK}
+        lineClassName="plan-resize-line"
+        handleClassName="plan-resize-handle"
+        onResizeEnd={(_, box) => onResize(block.id, box)}
+      />
+    )}
     <div
       className={`plan-block${block.placed ? "" : " waiting"}${selected ? " selected" : ""}${findings ? " has-findings" : ""}${badgeClass(badge)}`}
       data-placed={block.placed}
-      style={{ width: block.width, height: block.height }}
+      style={onResize ? { width: "100%", height: "100%" } : { width: block.width, height: block.height }}
       data-plan-block={block.id}
     >
       <div className="plan-title">
@@ -88,6 +109,7 @@ function BlockView({ data, selected }: NodeProps<Node<BlockData>>) {
       ))}
       {findings > 0 && <span className="topo-flag" title={t("topology.findings")}>{findings}</span>}
     </div>
+    </>
   );
 }
 
@@ -119,7 +141,7 @@ function HallView({ data }: NodeProps<Node<{ width: number; height: number; name
 }
 const nodeTypes = { block: BlockView, spot: SpotView, hall: HallView };
 
-export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell, editable = false, onMove, badges, linkLook, children }: {
+export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell, editable = false, onMove, onResize, badges, linkLook, children }: {
   plan: FloorPlan;
   name: string;
   /** The diagram's nodes, for the second line of each block and spot. */
@@ -134,6 +156,8 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
   /** Blocks and spots can be dragged; onMove gets the new upper left corner in plan pixels. */
   editable?: boolean;
   onMove?: (id: string, at: { x: number; y: number }) => void;
+  /** A block's footprint was resized by its handles; the new box in plan pixels. */
+  onResize?: (id: string, box: PlanBox) => void;
   /** Marks on blocks and spots, by id. */
   badges?: Map<string, PlanBadge>;
   linkLook?: (link: PlanLink) => LinkLook;
@@ -165,7 +189,7 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
       })),
     ];
   }, [plan, nodes, name, selectedId, findingsOf, badges, lang]);
-  const context = useMemo(() => ({ cellId, onCell }), [cellId, onCell]);
+  const context = useMemo(() => ({ cellId, onCell, onResize: editable ? onResize : undefined }), [cellId, onCell, editable, onResize]);
   // While editing, React Flow moves the nodes itself; the data follows on drop.
   const [live, setLive, onNodesChange] = useNodesState<Node>([]);
   useEffect(() => setLive(flowNodes), [flowNodes, setLive]);

@@ -26,7 +26,8 @@
 // 13. The hall plan: hall 3 in top view with HBR's 48 bays, a bay's levels
 //     with its blocked place, and the AutoStore hall. Hall 3 stands as its
 //     layout data says; a hall without layout data is calculated, then its
-//     layout is adopted, a storage type dragged and the hall's size set.
+//     layout is adopted, a storage type dragged and resized, and the hall's
+//     size set.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -596,6 +597,23 @@ async function hallPlanTests(browser) {
   const after = await page.locator(`[data-plan-block="${firstId}"]`).boundingBox();
   check(after.x > before.x + 3, `dragging moves ${firstId} in the plan`);
   check((await page.locator("[data-changes]").textContent()).includes(`${firstId} im Hallenplan platziert`), "the move is in the change log");
+  // Resize: drag the lower right corner of the same block inwards, by more than 1 m at any zoom.
+  const block = page.locator(`[data-plan-block="${firstId}"]`);
+  const corner = page.locator(`.react-flow__node[data-id="${firstId}"] .react-flow__resize-control.handle.bottom.right`);
+  await corner.scrollIntoViewIfNeeded();
+  const grip = await corner.boundingBox();
+  const sizeBefore = await block.boundingBox();
+  await editAndValidate(page, async () => {
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(grip.x + grip.width / 2 - 60, grip.y + grip.height / 2 - 40, { steps: 8 });
+    await page.mouse.up();
+  });
+  const sizeAfter = await block.boundingBox();
+  check(sizeAfter.width < sizeBefore.width - 20 && sizeAfter.height < sizeBefore.height - 10 && Math.abs(sizeAfter.x - sizeBefore.x) < 2,
+    `dragging a corner resizes ${firstId}'s footprint (${Math.round(sizeBefore.width)}x${Math.round(sizeBefore.height)} -> ${Math.round(sizeAfter.width)}x${Math.round(sizeAfter.height)} px)`);
+  check((await block.locator("[data-plan-cell]").count()) > 0 && await block.locator("[data-plan-cell]").first().isVisible(), "its bays are spread over the new footprint");
+
   await page.locator("[data-plan-hall-width]").fill("5");
   await page.locator("[data-plan-hall-depth]").fill("5");
   const small = await editAndValidate(page, () => page.locator("[data-plan-set-hall]").click());
