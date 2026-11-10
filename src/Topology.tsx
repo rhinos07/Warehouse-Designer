@@ -19,6 +19,7 @@ import { toAutomationML } from "./automationml";
 import { EditPanel, type Form } from "./EditPanel";
 import { CellDetails, FloorPlanCanvas, PlanLegend } from "./HallPlan";
 import { floorPlan, footprintOf, PX_PER_M, type PlanCell } from "./floorplan";
+import { PlanBackgroundControls, usePlanBackground } from "./planBackground";
 import { adoptPlan, EditError, ENDPOINT_KINDS, HOME, placeSpot, placeStorageType, removeLink, removeNode, setLayout, usages, type Change, type Files } from "./editor";
 import { buildGraph, findingsFor, kindLabel, modeLabel, MODES, subtitle, type NodeKind, type TopoEdge, type TopoNode } from "./graph";
 import { t, tl, tn, useLang } from "./i18n";
@@ -103,6 +104,7 @@ export function TopologyView({ buildings, findings, files, onChange, onChanges, 
   const edit = editing && canEdit && view === "flow";
   const planEdit = editing && canEdit && view === "plan";
   const [hallSize, setHallSize] = useState({ width: "", depth: "" });
+  const [background, setBackground, backgroundKept] = usePlanBackground(building?.dataset ?? building?.path ?? "");
   const plan = useMemo(() => (view === "plan" && building?.ok && graph ? floorPlan(building, graph) : null), [view, building, graph]);
   const findingCount = useCallback((id: string) => findingsFor(id, findings).length, [findings]);
   const chooseCell = useCallback((block: string, chosen: PlanCell) => {
@@ -357,6 +359,14 @@ export function TopologyView({ buildings, findings, files, onChange, onChanges, 
             <button className="secondary" onClick={() => setForm({ type: "reporting_point" })} disabled={busy}>{t("topology.addReportingPoint")}</button>
           </div>
         )}
+        {plan && (
+          <PlanBackgroundControls
+            value={background}
+            onChange={setBackground}
+            kept={backgroundKept}
+            defaultWidth={plan.layout?.width ?? Math.round(plan.hall.width / PX_PER_M)}
+          />
+        )}
         {planEdit && plan && (
           <div className="actions plan-actions">
             {onChanges && (
@@ -466,6 +476,7 @@ export function TopologyView({ buildings, findings, files, onChange, onChanges, 
                 key={`plan:${building.path}`}
                 plan={plan}
                 name={`${building.name ?? building.building ?? ""}${plan.layout ? ` · ${plan.layout.width} × ${plan.layout.depth} m` : ""}`}
+                background={background}
                 editable={planEdit && !busy}
                 onMove={movePlan}
                 onResize={resizePlan}

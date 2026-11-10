@@ -204,7 +204,7 @@ Hall plan, stage 2 (2026-11-10): real positions.
 | Feedback | After every edit the building is recompiled and checked with `validate.py`, as in the flow diagram. The four layout findings have German sentences in `src/findings.ts`. |
 | Example data | Hall 3 of `example_customer` states a complete layout (60 × 50 m, example values). The other two halls state none and show the calculated arrangement until a layout is adopted. |
 | Tests | `tests/unit.ts`: a hall with layout (hall size, a block at its footprint, bays spread over it, a door on its position, a waiting block), the layout edits on the example files (grid, changed lines, one change per file) and the findings. `tests/e2e.mjs`: hall 3 stands as its data says; in LP01 the layout is adopted and passes `validate.py`, a storage type is dragged, and a hall that is too small fails with a German finding. |
-| Open | No rotation, no floors above each other, no shapes other than rectangles: Topology-as-Code does not model them. The course of lanes and conveyors is not in the data; connections stay straight lines. A floor plan image as background. |
+| Open | No rotation, no floors above each other, no shapes other than rectangles: Topology-as-Code does not model them. The course of lanes and conveyors is not in the data; connections stay straight lines. |
 
 Material flow on the hall plan (2026-11-10). The material flow tab has the same switch as the topology tab: "Flussdiagramm / Hallenplan". A hall that states its layout opens on the hall plan; the user's choice wins after that.
 
@@ -216,3 +216,14 @@ Material flow on the hall plan (2026-11-10). The material flow tab has the same 
 | Open | Travel times from distances in the layout, once lanes and conveyors have a course. |
 
 Resizing a footprint in the hall plan (2026-11-10). With "Bearbeiten", every block has handles on its corners and edges (React Flow's `NodeResizer`). Dropping a handle writes the storage type's `footprint` (position, width and depth) on the 0.5 m grid, through the same edit as a move (`placeStorageType`), so it is checked by `validate.py` and undone the same way. The smallest footprint is 1 × 1 m. Resizing a block without a footprint places it. While a handle is dragged, the bays keep their old layout; they are spread over the new footprint after the recompile.
+
+Floor plan image behind the hall plan (2026-11-10).
+
+| Topic | Decision / implementation |
+|---|---|
+| Use | Place the areas on a drawing of the hall: load the image, set its scale, then drag and resize the blocks on it. |
+| Calibration | Three numbers: the width the image shows in metres (the scale; the height follows from the image's proportions), and x and y of its upper left corner from the reference point (may be negative). A new image gets the hall's width. An opacity slider. No rotation. |
+| Where it is kept | In the browser only: `localStorage`, one entry per hall (`plan-background:<dataset id>`), image as data URL. It is not written to the repo's files. This follows the page's rule that files do not leave the browser, and needs no schema change. The price: a colleague does not get the image with the repo, and a large image may not fit the browser's storage. Then the page says so and keeps it until the reload. |
+| Drawing | `FloorPlanCanvas` takes the background as one more input and draws it as a node below the hall (`src/HallPlan.tsx`). With a background, blocks are half transparent and the hall has no fill. The material flow tab reads the same entry and shows the image too. Controls and storage: `src/planBackground.tsx`. |
+| Tests | `tests/e2e.mjs` loads `tests/fixtures/floor-plan.svg` (a drawn 60 × 50 m hall): the image covers hall 3 exactly, width and x change scale and place, it survives a reload, another hall does not show it, and removing it clears the storage. |
+| Open | Keeping the image with the data needs a field in Topology-as-Code (e.g. a file reference with scale and offset on `warehouse.layout`) and a place for the file in the repo. Setting the scale by clicking two points of known distance. |

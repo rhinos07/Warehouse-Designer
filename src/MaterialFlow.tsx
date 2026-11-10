@@ -6,6 +6,7 @@ import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useState } from "react";
 import { floorPlan, type FloorPlan } from "./floorplan";
 import { FloorPlanCanvas, type PlanBadge } from "./HallPlan";
+import { usePlanBackground } from "./planBackground";
 import { flowModel, inboundDoors, outboundDoors, reachability, storageTypes, workCenters, type FlowModel, type Link, type Move, type Verdict } from "./flow";
 import { buildGraph, subtitle, type Graph, type TopoNode } from "./graph";
 import { t, tl, useLang } from "./i18n";
@@ -131,6 +132,8 @@ export function MaterialFlowView({ buildings }: { buildings: Building[] }) {
   const graph = useMemo(() => (building ? buildGraph(building) : null), [building]);
   const reach = useMemo(() => (model ? reachability(model) : null), [model]);
   const plan = useMemo(() => (building && graph ? floorPlan(building, graph) : null), [building, graph]);
+  // The floor plan image loaded in the topology tab's hall plan, if any.
+  const [background] = usePlanBackground(building?.dataset ?? building?.path ?? "");
   const planLines = useMemo(() => new Map((plan?.links ?? []).map((l) => [l.id, l])), [plan]);
   // The hall plan where the hall states its layout, the flow diagram otherwise; the user's choice wins.
   const [chosenView, setChosenView] = useState<"flow" | "plan" | null>(null);
@@ -374,6 +377,7 @@ export function MaterialFlowView({ buildings }: { buildings: Building[] }) {
               plan={plan}
               name={`${building.name ?? building.building ?? ""}${plan.layout ? ` · ${plan.layout.width} × ${plan.layout.depth} m` : ""}`}
               nodes={graph.nodes}
+              background={background}
               findingsOf={none}
               colors={EDGE_COLOR}
               selectedId={null}
