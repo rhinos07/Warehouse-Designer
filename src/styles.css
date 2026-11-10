@@ -309,3 +309,11 @@ code.readonly { padding: 4px 0; }
 .simulation .plan-cell { cursor: default; }
 .plan-resize-line.react-flow__resize-control.line { border-color: var(--accent); opacity: 0.5; }
 .plan-resize-handle.react-flow__resize-control.handle { width: 16px; height: 16px; background: var(--accent); border: 1.5px solid var(--surface); border-radius: 2px; }
+.plan-background { display: block; height: auto; max-width: none; user-select: none; }
+.plan-background-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.plan-background-controls input[type="number"] { width: 64px; }
+.plan-background-controls input[type="range"] { width: 90px; vertical-align: middle; }
+/* With a floor plan behind it, the plan lets the image show through. */
+.with-background .plan-hall { background: transparent; }
+.with-background .plan-block { background: color-mix(in srgb, var(--surface) 55%, transparent); }
+.with-background .plan-cell { opacity: 0.8; }

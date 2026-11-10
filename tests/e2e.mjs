@@ -27,7 +27,7 @@
 //     with its blocked place, and the AutoStore hall. Hall 3 stands as its
 //     layout data says; a hall without layout data is calculated, then its
 //     layout is adopted, a storage type dragged and resized, and the hall's
-//     size set.
+//     size set. A floor plan image lies behind the plan.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -571,6 +571,35 @@ async function hallPlanTests(browser) {
   const hbr = await page.locator('[data-plan-block="HBR"]').boundingBox();
   const flex = await page.locator('[data-plan-block="HBR_FLEX"]').boundingBox();
   check(Math.abs(hbr.height / hbr.width - 40 / 12) < 0.05 && flex.x > hbr.x + hbr.width, "HBR is drawn 12 x 40 m, with HBR_FLEX to its right");
+
+  // A floor plan image behind the plan: scaled to the hall, kept across a reload, removed.
+  await page.locator("[data-background-file]").setInputFiles("tests/fixtures/floor-plan.svg");
+  const image = page.locator("[data-plan-background]");
+  await image.waitFor();
+  await page.waitForFunction(() => document.querySelector("[data-plan-background]").naturalWidth > 0);
+  const near = (a, b) => Math.abs(a - b) < 2;
+  let [imageBox, hallBox] = [await image.boundingBox(), await page.locator(".plan-hall").first().boundingBox()];
+  check(near(imageBox.x, hallBox.x) && near(imageBox.y, hallBox.y) && near(imageBox.width, hallBox.width) && near(imageBox.height, hallBox.height),
+    "a floor plan image of the hall's proportions covers the hall exactly");
+  await page.locator('[data-background="width"]').fill("30");
+  await page.locator('[data-background="x"]').fill("30");
+  [imageBox, hallBox] = [await image.boundingBox(), await page.locator(".plan-hall").first().boundingBox()];
+  check(near(imageBox.width, hallBox.width / 2) && near(imageBox.x, hallBox.x + hallBox.width / 2), "its width in metres sets the scale, x and y its place");
+  await page.reload();
+  await page.getByRole("tab", { name: "Topologie" }).click();
+  await hall.waitFor({ timeout: TIMEOUT });
+  await pick("/ PA11 /");
+  await page.locator('[data-view="plan"]').click();
+  await image.waitFor();
+  check((await page.locator('[data-background="width"]').inputValue()) === "30", "the image and its settings are kept in the browser across a reload");
+  await pick("/ LP01 /");
+  await page.locator("[data-plan-block]").first().waitFor();
+  check((await image.count()) === 0, "another hall does not show it");
+  await pick("/ PA11 /");
+  await image.waitFor();
+  await page.locator("[data-background-remove]").click();
+  check((await image.count()) === 0 && (await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("plan-background:")).length)) === 0,
+    "removing the image also removes it from the browser's storage");
 
   // A hall without layout data: calculated, then adopted and edited.
   await pick("/ LP01 /");

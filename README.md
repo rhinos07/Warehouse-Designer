@@ -147,6 +147,14 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
     After every change Topology's `validate.py` checks the layout: inside the
     hall, no overlapping footprints. The findings show in project language.
+  - **Floor plan image:** "Grundriss laden …" puts an image (PNG, JPG, SVG)
+    behind the plan, to place the areas on it.
+    - "Bildbreite" states how many metres the image shows across. This sets
+      the scale. x and y move the image; the slider sets its opacity.
+    - The image and its settings stay in the browser (local storage, per
+      hall). They are not written to the files, so a colleague does not get
+      them with the repo.
+    - The material flow tab shows the same image behind its hall plan.
   - Clicking a bay shows its levels as a side view, with each place and a
     blocked place in red. Clicking a block shows the storage type's data.
   - **Assumed** where the data states nothing: 1.2 × 0.8 m for a place

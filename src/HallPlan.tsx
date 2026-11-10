@@ -139,9 +139,12 @@ function HallView({ data }: NodeProps<Node<{ width: number; height: number; name
     </div>
   );
 }
-const nodeTypes = { block: BlockView, spot: SpotView, hall: HallView };
+function BackgroundView({ data }: NodeProps<Node<{ url: string; width: number; opacity: number }>>) {
+  return <img className="plan-background" src={data.url} alt="" draggable={false} style={{ width: data.width, opacity: data.opacity }} data-plan-background />;
+}
+const nodeTypes = { block: BlockView, spot: SpotView, hall: HallView, background: BackgroundView };
 
-export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell, editable = false, onMove, onResize, badges, linkLook, children }: {
+export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell, editable = false, onMove, onResize, badges, linkLook, background, children }: {
   plan: FloorPlan;
   name: string;
   /** The diagram's nodes, for the second line of each block and spot. */
@@ -158,6 +161,8 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
   onMove?: (id: string, at: { x: number; y: number }) => void;
   /** A block's footprint was resized by its handles; the new box in plan pixels. */
   onResize?: (id: string, box: PlanBox) => void;
+  /** A floor plan image behind the plan; lengths in metres from the reference point. */
+  background?: { url: string; width: number; x: number; y: number; opacity: number } | null;
   /** Marks on blocks and spots, by id. */
   badges?: Map<string, PlanBadge>;
   linkLook?: (link: PlanLink) => LinkLook;
@@ -168,6 +173,13 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
   const flowNodes = useMemo<Node[]>(() => {
     const byId = new Map(nodes.map((n) => [n.id, n]));
     return [
+      ...(background
+        ? [{
+            id: "plan:background", type: "background", position: { x: background.x * PX_PER_M, y: background.y * PX_PER_M },
+            data: { url: background.url, width: background.width * PX_PER_M, opacity: background.opacity },
+            selectable: false, draggable: false, zIndex: -2, style: { pointerEvents: "none" as const },
+          }]
+        : []),
       {
         id: "plan:hall", type: "hall", position: { x: plan.hall.x, y: plan.hall.y }, data: { ...plan.hall, name },
         selectable: false, draggable: false, zIndex: -1, style: { pointerEvents: "none" as const },
@@ -188,7 +200,7 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
         data: { spot, node: byId.get(spot.id), findings: findingsOf(spot.id), badge: badges?.get(spot.id) }, selected: spot.id === selectedId,
       })),
     ];
-  }, [plan, nodes, name, selectedId, findingsOf, badges, lang]);
+  }, [plan, nodes, name, selectedId, findingsOf, badges, background, lang]);
   const context = useMemo(() => ({ cellId, onCell, onResize: editable ? onResize : undefined }), [cellId, onCell, editable, onResize]);
   // While editing, React Flow moves the nodes itself; the data follows on drop.
   const [live, setLive, onNodesChange] = useNodesState<Node>([]);
@@ -197,6 +209,7 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
   return (
     <Context.Provider value={context}>
       <ReactFlow
+        className={background ? "with-background" : undefined}
         nodes={editable ? live : flowNodes}
         onNodesChange={editable ? onNodesChange : undefined}
         snapToGrid={editable}
