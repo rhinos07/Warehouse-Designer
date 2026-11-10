@@ -20,8 +20,9 @@
 //     planner's file with standard roles becomes a skeleton; undo removes an
 //     import in one step.
 // 12. Material flow: hall 3's reachability (physical path and movement rules)
-//     and a simulated 8 h run of the default flows; turning the rules off
-//     lets a flow into the explicit_only HBR run.
+//     and a simulated 8 h run of the default flows, on the hall plan and on
+//     the flow diagram; turning the rules off lets a flow into the
+//     explicit_only HBR run.
 // 13. The hall plan: hall 3 in top view with HBR's 48 bays, a bay's levels
 //     with its blocked place, and the AutoStore hall. Hall 3 stands as its
 //     layout data says; a hall without layout data is calculated, then its
@@ -504,19 +505,33 @@ async function materialFlowTests(browser) {
     "DOOR_01 -> HBR: a physical path, but explicit_only and no rule names the move");
   check((await row("DOOR_01>BLK").getAttribute("data-path")) === "no", "DOOR_01 -> BLK: no physical path");
   check(await page.locator("[data-sim-unconnected]").isVisible(), "storage types without any connection are listed");
+  check((await page.locator("[data-sim-canvas]").getAttribute("data-sim-canvas")) === "plan" && await page.locator('[data-plan-block="HBR"]').isVisible(),
+    "hall 3 states its layout, so the material flow opens on the hall plan");
   await row("DOOR_01>FIX").click();
-  check(await page.locator('[data-sim-node="HBR"]').evaluate((e) => e.classList.contains("marked")), "clicking a move marks its path in the diagram");
+  check(await page.locator('[data-plan-block="HBR"]').evaluate((e) => e.classList.contains("marked")), "clicking a move marks its path in the hall plan");
 
   const flows = page.locator("[data-sim-flow]");
   check((await flows.count()) === 2, "two default flows: one inbound, one outbound");
   check((await page.locator('[data-sim-flow] [data-state="ok"]').count()) === 2, "both default flows can run");
   await page.locator("[data-sim-play]").click();
   await page.waitForFunction(() => document.querySelectorAll(".sim-unit").length > 0, null, { timeout: 20_000 });
-  check(true, "load units move on the diagram");
+  const hallBox = await page.locator(".plan-hall").first().boundingBox();
+  const unitBox = await page.locator(".sim-unit").first().boundingBox();
+  check(unitBox.x > hallBox.x && unitBox.x < hallBox.x + hallBox.width && unitBox.y > hallBox.y && unitBox.y < hallBox.y + hallBox.height + 20,
+    "load units move inside the hall plan");
   await page.locator("[data-sim-hours]").click();
   const done = await page.$$eval("[data-done]", (els) => els.map((e) => Number(e.getAttribute("data-done"))));
   check(done.length === 2 && done.every((n) => n > 50), `after 8 h both flows have finished load units (${done.join(", ")})`);
   check((await page.locator("[data-sim-clock]").textContent()).includes("08:"), "the clock shows the simulated time");
+  check(/^\d+\/24/.test(await page.locator('[data-plan-block="FIX"] .plan-title span').textContent()), "a storage type in the plan shows its stock");
+
+  // The flow diagram is still there, with the same simulation.
+  await page.locator('[data-sim-view="flow"]').click();
+  await page.locator('[data-sim-node="HBR"]').waitFor();
+  check(await page.locator('[data-sim-node="HBR"]').evaluate((e) => e.classList.contains("marked")), "the flow diagram shows the same marked path");
+  check((await page.$$eval("[data-done]", (els) => els.map((e) => Number(e.getAttribute("data-done"))))).join() === done.join(), "switching the view keeps the simulation's state");
+  await page.locator('[data-sim-view="plan"]').click();
+  await page.locator('[data-plan-block="HBR"]').waitFor();
 
   const inbound = flows.nth(0);
   await inbound.locator("select").nth(2).selectOption("HBR");

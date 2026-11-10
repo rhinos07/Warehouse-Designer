@@ -304,3 +304,6 @@ code.readonly { padding: 4px 0; }
 .plan-block.waiting, .plan-spot.waiting { border-style: dashed; opacity: 0.85; }
 .plan-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .plan-actions input[type="number"] { width: 70px; }
+.plan-block.bottleneck { outline: 3px solid var(--bad); outline-offset: 2px; }
+.plan-block.marked { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 45%, transparent); }
+.simulation .plan-cell { cursor: default; }

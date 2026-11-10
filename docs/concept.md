@@ -204,4 +204,13 @@ Hall plan, stage 2 (2026-11-10): real positions.
 | Feedback | After every edit the building is recompiled and checked with `validate.py`, as in the flow diagram. The four layout findings have German sentences in `src/findings.ts`. |
 | Example data | Hall 3 of `example_customer` states a complete layout (60 × 50 m, example values). The other two halls state none and show the calculated arrangement until a layout is adopted. |
 | Tests | `tests/unit.ts`: a hall with layout (hall size, a block at its footprint, bays spread over it, a door on its position, a waiting block), the layout edits on the example files (grid, changed lines, one change per file) and the findings. `tests/e2e.mjs`: hall 3 stands as its data says; in LP01 the layout is adopted and passes `validate.py`, a storage type is dragged, and a hall that is too small fails with a German finding. |
-| Open | A footprint cannot be resized by dragging. No rotation, no floors above each other, no shapes other than rectangles: Topology-as-Code does not model them. The course of lanes and conveyors is not in the data; connections stay straight lines. The material flow tab still runs on the flow diagram, not on the hall plan. A floor plan image as background. |
+| Open | A footprint cannot be resized by dragging. No rotation, no floors above each other, no shapes other than rectangles: Topology-as-Code does not model them. The course of lanes and conveyors is not in the data; connections stay straight lines. A floor plan image as background. |
+
+Material flow on the hall plan (2026-11-10). The material flow tab has the same switch as the topology tab: "Flussdiagramm / Hallenplan". A hall that states its layout opens on the hall plan; the user's choice wins after that.
+
+| Topic | Decision / implementation |
+|---|---|
+| One simulation, two views | The simulation does not know the view. Switching keeps its state. |
+| Drawing | `FloorPlanCanvas` (`src/HallPlan.tsx`) takes marks for blocks and spots, a look for each connection and an overlay. The material flow passes: stock or utilization as an area's second line, the queue as a badge, the bottleneck in red, a marked path, pale lines for connections no flow uses, and the load units as dots. |
+| Path of a load unit | Along the plan's straight line of its connection, from edge to edge of the two areas. The real course of lanes and conveyors is not in the data. Travel time is as before (`expected_duration` or the default per transport mode); the distance in the plan does not change it. |
+| Open | Travel times from distances in the layout, once lanes and conveyors have a course. |

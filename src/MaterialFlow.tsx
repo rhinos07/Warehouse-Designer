@@ -4,6 +4,8 @@
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, ViewportPortal, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useState } from "react";
+import { floorPlan, type FloorPlan } from "./floorplan";
+import { FloorPlanCanvas, type PlanBadge } from "./HallPlan";
 import { flowModel, inboundDoors, outboundDoors, reachability, storageTypes, workCenters, type FlowModel, type Link, type Move, type Verdict } from "./flow";
 import { buildGraph, subtitle, type Graph, type TopoNode } from "./graph";
 import { t, tl, useLang } from "./i18n";
@@ -109,6 +111,18 @@ function locate(graph: Graph, link: Link, progress: number) {
   return { x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p };
 }
 
+/** Where a load unit on a link is drawn in the hall plan: along the line of the plan's connection. */
+function locateInPlan(lines: Map<string, FloorPlan["links"][number]>, link: Link, progress: number) {
+  const forward = lines.get(`can:${link.resource}:${link.from}:${link.to}`);
+  const line = forward ?? lines.get(`can:${link.resource}:${link.to}:${link.from}`);
+  if (!line) return null;
+  const [a, b] = forward ? [{ x: line.x1, y: line.y1 }, { x: line.x2, y: line.y2 }] : [{ x: line.x2, y: line.y2 }, { x: line.x1, y: line.y1 }];
+  const p = Math.min(1, Math.max(0, progress));
+  return { x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p };
+}
+const none = () => 0;
+const nothing = () => {};
+
 export function MaterialFlowView({ buildings }: { buildings: Building[] }) {
   const ok = buildings.filter((b) => b.ok);
   const [path, setPath] = useState(() => (ok.find((b) => b.dataset === PREFERRED_HALL) ?? ok[0])?.path);
@@ -116,6 +130,11 @@ export function MaterialFlowView({ buildings }: { buildings: Building[] }) {
   const model = useMemo(() => (building ? flowModel(building) : null), [building]);
   const graph = useMemo(() => (building ? buildGraph(building) : null), [building]);
   const reach = useMemo(() => (model ? reachability(model) : null), [model]);
+  const plan = useMemo(() => (building && graph ? floorPlan(building, graph) : null), [building, graph]);
+  const planLines = useMemo(() => new Map((plan?.links ?? []).map((l) => [l.id, l])), [plan]);
+  // The hall plan where the hall states its layout, the flow diagram otherwise; the user's choice wins.
+  const [chosenView, setChosenView] = useState<"flow" | "plan" | null>(null);
+  const view = chosenView ?? (plan?.real ? "plan" : "flow");
 
   const [rules, setRules] = useState(true);
   const [flows, setFlows] = useState<FlowSpec[]>(() => (model ? defaultFlows(model, true) : []));
@@ -213,7 +232,35 @@ export function MaterialFlowView({ buildings }: { buildings: Building[] }) {
     });
   }, [graph, model, usedLinks, markedLinks, snap, lang]);
 
-  if (!building || !model || !graph || !reach) return <p className="status">{t("topology.noHalls")}</p>;
+  const badges = useMemo(() => {
+    const map = new Map<string, PlanBadge>();
+    if (view !== "plan" || !graph) return map;
+    const jamId = jammed(snap);
+    for (const n of graph.nodes) {
+      const stats = snap?.nodes.get(n.id);
+      const parts: string[] = [];
+      if (stats?.capacity !== undefined) parts.push(`${stats.stock}/${stats.capacity}`);
+      if (stats && stats.utilization > 0) parts.push(percent(stats.utilization));
+      map.set(n.id, { sub: parts.length ? parts.join(" · ") : undefined, queue: stats?.queue, bottleneck: jamId === n.id, marked: markedNodes.has(n.id) });
+    }
+    return map;
+  }, [view, graph, snap, markedNodes]);
+
+  if (!building || !model || !graph || !reach || !plan) return <p className="status">{t("topology.noHalls")}</p>;
+  const linkLook = (line: FloorPlan["links"][number]) => {
+    // The plan's line id is can:<resource>:<from>:<to>; the simulation's links are <source type>:<resource>:<from>:<to>.
+    const [, resource] = line.id.split(":");
+    const ids = model.links
+      .filter((l) => l.resource === resource && ((l.from === line.from && l.to === line.to) || (l.from === line.to && l.to === line.from)))
+      .map((l) => l.id);
+    const isMarked = ids.some((id) => markedLinks.has(id));
+    const isJam = jammed(snap) === resource;
+    return {
+      color: isJam ? EDGE_COLOR.forbidden : undefined,
+      width: isMarked ? 6 : isJam ? 5 : 2.5,
+      opacity: isMarked || ids.some((id) => usedLinks.has(id)) ? 1 : 0.25,
+    };
+  };
   const hours = (snap?.now ?? 0) / 3600;
   const sources = [...inboundDoors(model), ...storageTypes(model)].map((n) => n.id);
   const targets = [...storageTypes(model), ...outboundDoors(model)].map((n) => n.id);
@@ -234,6 +281,13 @@ export function MaterialFlowView({ buildings }: { buildings: Building[] }) {
             ))}
           </select>
         </label>
+        <div className="view-switch" role="group" aria-label={t("plan.viewLabel")}>
+          {(["flow", "plan"] as const).map((v) => (
+            <button key={v} type="button" aria-pressed={view === v} className={view === v ? "active" : "secondary"} onClick={() => setChosenView(v)} data-sim-view={v}>
+              {t(`plan.view.${v}`)}
+            </button>
+          ))}
+        </div>
         <label title={t("sim.rulesHint")}>
           <input type="checkbox" checked={rules} onChange={(e) => setRules(e.target.checked)} data-sim-rules /> {t("sim.rules")}
         </label>
@@ -311,8 +365,36 @@ export function MaterialFlowView({ buildings }: { buildings: Building[] }) {
         <strong className="sim-clock" data-sim-clock>{t("sim.clock", { time: clock(snap?.now ?? 0) })}</strong>
       </div>
 
+      {view === "plan" && !plan.real && <p className="hint">{t("plan.schematic")}</p>}
       <div className="topo-main">
-        <div className="topo-canvas">
+        <div className="topo-canvas" data-sim-canvas={view}>
+          {view === "plan" ? (
+            <FloorPlanCanvas
+              key={`plan:${building.path}`}
+              plan={plan}
+              name={`${building.name ?? building.building ?? ""}${plan.layout ? ` · ${plan.layout.width} × ${plan.layout.depth} m` : ""}`}
+              nodes={graph.nodes}
+              findingsOf={none}
+              colors={EDGE_COLOR}
+              selectedId={null}
+              cellId={null}
+              onSelect={nothing}
+              onCell={nothing}
+              badges={badges}
+              linkLook={linkLook}
+            >
+              {snap?.units.map((u) => {
+                const at = locateInPlan(planLines, u.link, u.progress);
+                return at ? (
+                  <span
+                    key={u.id}
+                    className="sim-unit"
+                    style={{ transform: `translate(${at.x - 6}px, ${at.y - 6}px)`, background: FLOW_COLORS[u.flow % FLOW_COLORS.length] }}
+                  />
+                ) : null;
+              })}
+            </FloorPlanCanvas>
+          ) : (
           <ReactFlow
             key={building.path}
             nodes={flowNodes}
@@ -340,6 +422,7 @@ export function MaterialFlowView({ buildings }: { buildings: Building[] }) {
               })}
             </ViewportPortal>
           </ReactFlow>
+          )}
         </div>
         <aside className="topo-details" data-sim-results>
           <h4>{t("sim.results")}</h4>
