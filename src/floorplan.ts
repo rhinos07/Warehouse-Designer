@@ -25,7 +25,9 @@ const AISLE_M = 1.6;
 const HEADER = 24;
 const PAD = 10;
 const GAP = 46;
-const SPOT = { width: 150, height: 40 };
+// Half of each side is a multiple of the drawing's 0.5 m grid (13 px), so a
+// spot centered on a grid point has its corner on the grid too and snaps cleanly.
+const SPOT = { width: 156, height: 52 };
 
 const UNIT_M: Record<string, number> = { m: 1, cm: 0.01, mm: 0.001 };
 /** A length like {value: 120, unit: "cm"} in metres; undefined if it is not one. */

@@ -227,3 +227,14 @@ Floor plan image behind the hall plan (2026-11-10).
 | Drawing | `FloorPlanCanvas` takes the background as one more input and draws it as a node below the hall (`src/HallPlan.tsx`). With a background, blocks are half transparent and the hall has no fill. The material flow tab reads the same entry and shows the image too. Controls and storage: `src/planBackground.tsx`. |
 | Tests | `tests/e2e.mjs` loads `tests/fixtures/floor-plan.svg` (a drawn 60 × 50 m hall): the image covers hall 3 exactly, width and x change scale and place, it survives a reload, another hall does not show it, and removing it clears the storage. |
 | Open | Keeping the image with the data needs a field in Topology-as-Code (e.g. a file reference with scale and offset on `warehouse.layout`) and a place for the file in the repo. Setting the scale by clicking two points of known distance. |
+
+Fixes to dragging in the hall plan (2026-11-10), found by dragging hall 3 several times in a row:
+
+| Problem | Cause | Fix |
+|---|---|---|
+| A dropped element jumped back to its old place for 1-2 s, until the page had re-checked the edit. | While the page re-checks, the plan was locked and showed the last compiled positions. | The plan keeps showing what was dropped until the recompiled plan arrives (`src/HallPlan.tsx`); it stays locked against new drags meanwhile. |
+| Every few drags, the page stuck with "NaN … is not valid JSON". | After an edit the plan rebuilt its React Flow nodes without their measured size. React Flow measures a node only when its size changes, and computes a drag from the measured size, so the next drag ended at NaN, which was written to the YAML. | The rebuilt nodes keep their size. The layout edits (`src/editor.ts`) refuse values that are not numbers. |
+| An element near the edge of the canvas, e.g. a door on the hall's wall, drifted further than the mouse moved. | React Flow pans the view when a node is dragged near the edge, and the node moves with it. | Auto-panning is off in the hall plan. |
+| Doors, work centers and reporting points moved a few pixels after the check. | Their drawn size did not fit the 0.5 m grid, so a centered spot's corner was off the grid. | Spots are 156 × 52 px (6 × 2 m), so their corner lies on the grid. |
+| A drag that started on a bay also opened that bay in the side panel. | The bay's click fired on release. | A click after the mouse moved more than 3 px is ignored. |
+

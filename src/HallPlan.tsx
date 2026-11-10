@@ -3,7 +3,7 @@
 // connections as lines. See floorplan.ts for what is data and what is calculated.
 import { Background, Controls, NodeResizer, ReactFlow, useNodesState, ViewportPortal, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { metres, PX_PER_M, type FloorPlan, type PlanBlock, type PlanCell, type PlanLink, type PlanSpot } from "./floorplan";
 import { subtitle, type TopoNode } from "./graph";
 import { t, tl, tn, useLang } from "./i18n";
@@ -26,6 +26,8 @@ interface PlanContext {
   onCell: (block: string, cell: PlanCell) => void;
   /** Set while the layout is edited: a block's footprint can be resized. */
   onResize?: (id: string, box: PlanBox) => void;
+  /** While the layout is edited, a block fills its node, whose size React Flow keeps. */
+  fill?: boolean;
 }
 const Context = createContext<PlanContext>({ cellId: null, onCell: () => {} });
 /** Smallest footprint that can be dragged: 1 m. */
@@ -64,7 +66,9 @@ type BlockData = { block: PlanBlock; node?: TopoNode; findings: number; badge?: 
 
 function BlockView({ data, selected }: NodeProps<Node<BlockData>>) {
   const { block, node, findings, badge } = data;
-  const { cellId, onCell, onResize } = useContext(Context);
+  const { cellId, onCell, onResize, fill } = useContext(Context);
+  // A drag that starts on a bay must not also open that bay when the mouse is released.
+  const pressed = useRef<{ x: number; y: number } | null>(null);
   return (
     <>
     {onResize && (
@@ -79,7 +83,7 @@ function BlockView({ data, selected }: NodeProps<Node<BlockData>>) {
     <div
       className={`plan-block${block.placed ? "" : " waiting"}${selected ? " selected" : ""}${findings ? " has-findings" : ""}${badgeClass(badge)}`}
       data-placed={block.placed}
-      style={onResize ? { width: "100%", height: "100%" } : { width: block.width, height: block.height }}
+      style={fill ? { width: "100%", height: "100%" } : { width: block.width, height: block.height }}
       data-plan-block={block.id}
     >
       <div className="plan-title">
@@ -99,8 +103,11 @@ function BlockView({ data, selected }: NodeProps<Node<BlockData>>) {
           style={{ left: cell.x, top: cell.y, width: cell.width, height: cell.height }}
           title={cellTitle(cell)}
           data-plan-cell={cell.id}
+          onPointerDown={(event) => (pressed.current = { x: event.clientX, y: event.clientY })}
           onClick={(event) => {
             event.stopPropagation();
+            const start = pressed.current;
+            if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 3) return;
             onCell(block.id, cell);
           }}
         >
@@ -144,7 +151,7 @@ function BackgroundView({ data }: NodeProps<Node<{ url: string; width: number; o
 }
 const nodeTypes = { block: BlockView, spot: SpotView, hall: HallView, background: BackgroundView };
 
-export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell, editable = false, onMove, onResize, badges, linkLook, background, children }: {
+export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell, editable = false, locked = false, onMove, onResize, badges, linkLook, background, children }: {
   plan: FloorPlan;
   name: string;
   /** The diagram's nodes, for the second line of each block and spot. */
@@ -158,9 +165,12 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
   onCell: (block: string, cell: PlanCell) => void;
   /** Blocks and spots can be dragged; onMove gets the new upper left corner in plan pixels. */
   editable?: boolean;
-  onMove?: (id: string, at: { x: number; y: number }) => void;
-  /** A block's footprint was resized by its handles; the new box in plan pixels. */
-  onResize?: (id: string, box: PlanBox) => void;
+  /** While true (e.g. the page is checking the last edit), nothing can be dragged; positions stay as dropped. */
+  locked?: boolean;
+  /** Returns false if the move changed nothing: the element then goes back to its place. */
+  onMove?: (id: string, at: { x: number; y: number }) => boolean;
+  /** A block's footprint was resized by its handles; the new box in plan pixels. Returns false like onMove. */
+  onResize?: (id: string, box: PlanBox) => boolean;
   /** A floor plan image behind the plan; lengths in metres from the reference point. */
   background?: { url: string; width: number; x: number; y: number; opacity: number } | null;
   /** Marks on blocks and spots, by id. */
@@ -201,10 +211,53 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
       })),
     ];
   }, [plan, nodes, name, selectedId, findingsOf, badges, background, lang]);
-  const context = useMemo(() => ({ cellId, onCell, onResize: editable ? onResize : undefined }), [cellId, onCell, editable, onResize]);
   // While editing, React Flow moves the nodes itself; the data follows on drop.
+  // A dropped node stays where it was dropped until the recompiled plan arrives,
+  // instead of jumping back to its old place in the meantime.
   const [live, setLive, onNodesChange] = useNodesState<Node>([]);
-  useEffect(() => setLive(flowNodes), [flowNodes, setLive]);
+  // Where nodes were dropped, until the plan built from the changed data arrives.
+  const dropped = useRef(new Map<string, PlanBox>());
+  const droppedFor = useRef(plan);
+  useEffect(() => {
+    if (droppedFor.current !== plan) {
+      droppedFor.current = plan;
+      dropped.current.clear();
+    }
+    // Keep each node's measured size: React Flow measures a node only when its size
+    // changes, and computes a drag from the measured size - without it a drag ends at NaN.
+    setLive((previous) => {
+      const measured = new Map(previous.map((n) => [n.id, n.measured]));
+      return flowNodes.map((n) => {
+        const box = dropped.current.get(n.id);
+        const node = box ? { ...n, position: { x: box.x, y: box.y }, width: box.width, height: box.height } : n;
+        const size = node.width && node.height ? { width: node.width, height: node.height } : measured.get(n.id);
+        return size ? { ...node, measured: size } : node;
+      });
+    });
+  }, [plan, flowNodes, setLive]);
+  const draggable = editable && !locked;
+  /** After a drop: keep the node where it is, or put it back if the drop changed nothing. */
+  const settle = (id: string, box: PlanBox, changed: boolean) => {
+    if (changed) dropped.current.set(id, box);
+    else {
+      dropped.current.delete(id);
+      setLive((previous) => previous.map((n) => {
+        const original = flowNodes.find((f) => f.id === n.id);
+        return original ? { ...n, position: original.position, width: original.width, height: original.height } : n;
+      }));
+    }
+  };
+  const finite = (box: PlanBox) => [box.x, box.y, box.width, box.height].every(Number.isFinite);
+  const context = useMemo(
+    () => ({
+      cellId,
+      onCell,
+      fill: editable,
+      onResize: draggable && onResize ? (id: string, box: PlanBox) => settle(id, box, finite(box) && onResize(id, box)) : undefined,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cellId, onCell, editable, draggable, onResize, flowNodes],
+  );
   const grid = (PX_PER_M / 2) | 0;
   return (
     <Context.Provider value={context}>
@@ -214,13 +267,18 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
         onNodesChange={editable ? onNodesChange : undefined}
         snapToGrid={editable}
         snapGrid={[grid, grid]}
-        onNodeDragStop={(_, n) => editable && !n.id.startsWith("plan:") && onMove?.(n.id, n.position)}
+        onNodeDragStop={(_, n) => {
+          if (!draggable || n.id.startsWith("plan:") || !onMove) return;
+          const box = { ...n.position, width: n.measured?.width ?? n.width ?? 0, height: n.measured?.height ?? n.height ?? 0 };
+          settle(n.id, box, finite(box) && onMove(n.id, n.position));
+        }}
+        autoPanOnNodeDrag={false}
         edges={[]}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.06 }}
         minZoom={0.1}
-        nodesDraggable={editable}
+        nodesDraggable={draggable}
         nodesConnectable={false}
         onNodeClick={(_, n) => !n.id.startsWith("plan:") && onSelect(n.id)}
         onPaneClick={() => onSelect(null)}
