@@ -106,10 +106,11 @@ def findings(output):
 
 
 TOPOLOGY = "Topology-as-Code"
-# What the diagram draws, plus what the AutomationML export needs besides it.
+# What the diagram draws, plus what the AutomationML export and the hall plan (bay, shelf) need besides it.
 DIAGRAM_KINDS = ["storage_type", "door", "work_center", "reporting_point", "activity_area",
                  "controller", "equipment", "can_edge", "movement_rule",
-                 "section", "lane", "conveyor_segment", "conveyor_main", "warehouse"]
+                 "section", "lane", "conveyor_segment", "conveyor_main", "warehouse",
+                 "bay", "shelf"]
 
 
 EDITABLE_FILES = ["storage.yaml", "wcs.yaml", "lanes.yaml", "movement_rules.yaml"]

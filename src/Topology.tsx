@@ -12,14 +12,16 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { readAml, type AmlModel } from "./amlImport";
 import { AmlImport, type CreatedBuilding } from "./AmlImportPanel";
 import { toAutomationML } from "./automationml";
 import { EditPanel, type Form } from "./EditPanel";
+import { CellDetails, FloorPlanCanvas, PlanLegend } from "./HallPlan";
+import { floorPlan, type PlanCell } from "./floorplan";
 import { EditError, ENDPOINT_KINDS, HOME, removeLink, removeNode, usages, type Change, type Files } from "./editor";
 import { buildGraph, findingsFor, kindLabel, modeLabel, MODES, subtitle, type NodeKind, type TopoEdge, type TopoNode } from "./graph";
-import { t, tl, useLang } from "./i18n";
+import { t, tl, tn, useLang } from "./i18n";
 import type { Building, Catalog, Entity } from "./types";
 
 export const EDGE_COLOR: Record<string, string> = {
@@ -71,6 +73,8 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
   busy?: boolean;
 }) {
   const [path, setPath] = useState(() => (buildings.find((b) => b.ok) ?? buildings[0])?.path);
+  const [view, setView] = useState<"flow" | "plan">("flow");
+  const [cell, setCell] = useState<{ block: string; cell: PlanCell } | null>(null);
   const [showRules, setShowRules] = useState(false);
   const [editing, setEditing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -93,7 +97,16 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
     return () => cancelAnimationFrame(frame);
   }, [flow, nodeCount]);
   const canEdit = Boolean(files && onChange && building?.ok && building.sources);
-  const edit = editing && canEdit;
+  // The hall plan only shows; editing stays in the flow diagram.
+  const edit = editing && canEdit && view === "flow";
+  const plan = useMemo(() => (view === "plan" && building?.ok && graph ? floorPlan(building, graph) : null), [view, building, graph]);
+  const findingCount = useCallback((id: string) => findingsFor(id, findings).length, [findings]);
+  const chooseCell = useCallback((block: string, chosen: PlanCell) => {
+    setSelectedId(null);
+    setSelectedEdge(null);
+    setForm(null);
+    setCell({ block, cell: chosen });
+  }, []);
 
   /** Downloads the building, as compiled now (with unsaved edits), as an AutomationML file. */
   function exportAml() {
@@ -133,6 +146,7 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
   function select(node: string | null, edge: string | null = null) {
     setSelectedId(node);
     setSelectedEdge(edge);
+    setCell(null);
     setForm(null);
     setError("");
   }
@@ -204,6 +218,8 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
         onCancel={() => setForm(null)}
       />
     );
+  } else if (view === "plan" && cell) {
+    aside = <CellDetails block={cell.block} cell={cell.cell} />;
   } else if (edit && edge) {
     aside = <EdgeDetails edge={edge} onRemove={() => attempt(() => removeLink(building, files!, edge.sourceType ?? "", edge.entityId))} />;
   } else if (selected && graph) {
@@ -241,9 +257,7 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
   } else {
     aside = (
       <p className="hint">
-        {edit
-          ? t("topology.hintEdit")
-          : t("topology.hintView")}
+        {edit ? t("topology.hintEdit") : view === "plan" ? t("plan.hint") : t("topology.hintView")}
       </p>
     );
   }
@@ -268,10 +282,29 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
             ))}
           </select>
         </label>
-        <label>
-          <input type="checkbox" checked={showRules} onChange={(e) => setShowRules(e.target.checked)} /> {t("topology.showRules")}
-        </label>
-        {files && onChange && (
+        <div className="view-switch" role="group" aria-label={t("plan.viewLabel")}>
+          {(["flow", "plan"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={view === v}
+              className={view === v ? "active" : "secondary"}
+              onClick={() => {
+                setView(v);
+                select(null);
+              }}
+              data-view={v}
+            >
+              {t(`plan.view.${v}`)}
+            </button>
+          ))}
+        </div>
+        {view === "flow" && (
+          <label>
+            <input type="checkbox" checked={showRules} onChange={(e) => setShowRules(e.target.checked)} /> {t("topology.showRules")}
+          </label>
+        )}
+        {view === "flow" && files && onChange && (
           <label>
             <input
               type="checkbox"
@@ -335,9 +368,31 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
       )}
       {error && <p className="status error" data-edit-error>{error}</p>}
 
+      {plan && (
+        <p className="status plan-note" data-plan-note>
+          {t("plan.schematic")}
+          {plan.assumed > 0 && ` ${tn("plan.assumedCount", plan.assumed)}`}
+          {plan.flatRacks.length > 0 && ` ${t("plan.flatRacks", { ids: plan.flatRacks.join(", ") })}`}
+        </p>
+      )}
+
       {graph && (
         <div className="topo-main">
           <div className="topo-canvas">
+            {plan ? (
+              <FloorPlanCanvas
+                key={`plan:${building.path}`}
+                plan={plan}
+                name={building.name ?? building.building ?? ""}
+                nodes={graph.nodes}
+                findingsOf={findingCount}
+                colors={EDGE_COLOR}
+                selectedId={selectedId}
+                cellId={cell?.cell.id ?? null}
+                onSelect={(id) => select(id)}
+                onCell={chooseCell}
+              />
+            ) : (
             <ReactFlow
               key={building.path}
               nodes={flowNodes}
@@ -362,14 +417,15 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
               <Background />
               <Controls showInteractive={false} />
             </ReactFlow>
+            )}
           </div>
           <aside className="topo-details">{aside}</aside>
         </div>
       )}
 
-      {graph && <Legend />}
+      {graph && (plan ? <PlanLegend colors={EDGE_COLOR} modes={[...new Set(plan.links.map((l) => l.mode ?? ""))].filter(Boolean)} /> : <Legend />)}
 
-      {graph && showRules && graph.unplaced.length > 0 && (
+      {graph && view === "flow" && showRules && graph.unplaced.length > 0 && (
         <div className="unplaced">
           <h3>{t("topology.unplacedTitle")}</h3>
           <p className="hint">{t("topology.unplacedHint")}</p>

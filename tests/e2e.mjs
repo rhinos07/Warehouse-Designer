@@ -22,6 +22,8 @@
 // 12. Material flow: hall 3's reachability (physical path and movement rules)
 //     and a simulated 8 h run of the default flows; turning the rules off
 //     lets a flow into the explicit_only HBR run.
+// 13. The hall plan: hall 3 in top view with HBR's 48 bays, a bay's levels
+//     with its blocked place, and the AutoStore hall.
 // 6. Saving into an opened folder (a scripted folder picker), and refusing to
 //    overwrite a file that changed on disk meanwhile.
 import { spawn } from "node:child_process";
@@ -522,6 +524,39 @@ async function materialFlowTests(browser) {
   await page.close();
 }
 
+async function hallPlanTests(browser) {
+  const page = await browser.newPage({ locale: "de-DE" });
+  page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
+  await page.goto(URL);
+  await page.getByRole("tab", { name: "Topologie" }).click();
+  const hall = page.locator(".topo-toolbar select").first();
+  await hall.waitFor({ timeout: TIMEOUT });
+  const pick = async (part) => hall.selectOption({ label: (await hall.locator("option").allTextContents()).find((h) => h.includes(part)) });
+  await pick("/ PA11 /");
+  await page.locator('[data-view="plan"]').click();
+  await page.locator('[data-plan-block="HBR"]').waitFor();
+  check((await page.locator('[data-plan-block="HBR"] [data-plan-cell]').count()) === 48, "the hall plan draws HBR's 48 bays");
+  check((await page.locator('[data-plan-block="COLD_ZONE_B"] .plan-cell.cond-chilled').count()) === 36, "the cold zone's 36 places are drawn as chilled");
+  check((await page.locator('[data-plan-block="HAZMAT_A"] .plan-cell.hazmat').count()) === 8, "hazardous goods places are marked");
+  check((await page.locator("[data-plan-spot]").count()) === 8, "doors, work centers and reporting points are in the plan");
+  check((await page.locator("[data-plan-link]").count()) > 5, "the physical connections are drawn");
+  check((await page.locator("[data-plan-note]").textContent()).includes("berechnet"), "the plan says that the arrangement is calculated");
+  check(await page.locator('[data-plan-cell="HBR.F03-02"]').evaluate((e) => e.classList.contains("blocked")), "the bay with a blocked place is marked");
+  await page.locator('[data-plan-cell="HBR.F03-02"]').click();
+  const details = page.locator('[data-plan-details="HBR.F03-02"]');
+  check((await details.locator("[data-plan-level]").count()) === 6, "a bay shows its 6 levels");
+  check(await details.locator('[data-plan-place="HBR.03-04-01"]').evaluate((e) => e.classList.contains("blocked")), "the blocked place is red in the side view");
+  await page.locator('[data-plan-block="HBR"] .plan-title').click();
+  check(await page.locator('[data-details="HBR"]').isVisible(), "clicking a block shows the storage type's data");
+  await pick("/ AS01 /");
+  await page.locator("[data-plan-block]").first().waitFor();
+  check((await page.locator("[data-plan-block]").count()) > 0, "the AutoStore hall has a plan too");
+  await page.locator('[data-view="flow"]').click();
+  await page.locator("[data-node]").first().waitFor();
+  check(true, "the flow diagram comes back");
+  await page.close();
+}
+
 async function languageTests(browser) {
   const page = await browser.newPage({ locale: "en-US" });
   page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
@@ -651,6 +686,7 @@ try {
   await workflowTests(browser);
   await languageTests(browser);
   await materialFlowTests(browser);
+  await hallPlanTests(browser);
 } catch (error) {
   failures.push(String(error));
   console.log(`FAIL ${error}`);

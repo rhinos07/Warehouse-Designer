@@ -11,7 +11,7 @@ It runs without a server and is published with GitHub Pages:
 
 Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
 
-## Status: phase 5, all planned phases built, plus prototypes for AutomationML export and import and a material flow simulation
+## Status: phase 5, all planned phases built, plus prototypes for AutomationML export and import, a material flow simulation and a hall plan
 
 - **Open a folder** with YAML definitions and check it with the repos' own
   validators: each repo's `tools/validate.py` per customer,
@@ -117,6 +117,26 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
   Ids are derived from the data, so exporting the same data twice gives the
   same file. The example halls' exports were checked against the official
   CAEX 3.0 XSD (see [`docs/concept.md`](docs/concept.md)).
+- **Hall plan (prototype, stage 1).** In the topology tab, "Hallenplan"
+  switches from the flow diagram to a top view of the hall
+  (`src/floorplan.ts`, `src/HallPlan.tsx`).
+  - **From the data:**
+    - Each storage type is a block. A rack shows its rows and bays, a
+      channel storage its channels' depth, other storage types their places.
+    - The bays and places are drawn to scale from the places' `size`.
+    - Colors show the storage condition. Hazardous goods places and bays
+      with a blocked place are marked.
+    - Doors sit in the hall's wall. The physical connections are lines,
+      colored by transport mode.
+  - **Calculated, not real:** where the blocks, doors and work centers lie
+    in the hall. The data has no such positions yet. The page says so above
+    the plan.
+  - **Assumed:** the distance between rack rows (1.6 m), and 1.2 × 0.8 m
+    for a place without `size` (drawn dashed).
+  - Clicking a bay shows its levels as a side view, with each place and a
+    blocked place in red. Clicking a block shows the storage type's data.
+  - Editing stays in the flow diagram.
+  - Stage 2 (planned): real positions, kept in Topology-as-Code's schema.
 - **Material flow (prototype).** The tab "Materialfluss" shows how load
   units can move through a hall (`src/flow.ts`, `src/simulation.ts`,
   `src/MaterialFlow.tsx`). It opens with hall 3 of `example_customer`.
