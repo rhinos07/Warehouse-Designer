@@ -3,8 +3,8 @@
 // connections as lines. See floorplan.ts for what is data and what is calculated.
 import { Background, Controls, ReactFlow, useNodesState, ViewportPortal, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { createContext, useContext, useEffect, useMemo } from "react";
-import { metres, PX_PER_M, type FloorPlan, type PlanBlock, type PlanCell, type PlanSpot } from "./floorplan";
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import { metres, PX_PER_M, type FloorPlan, type PlanBlock, type PlanCell, type PlanLink, type PlanSpot } from "./floorplan";
 import { subtitle, type TopoNode } from "./graph";
 import { t, tl, tn, useLang } from "./i18n";
 import type { Entity } from "./types";
@@ -30,21 +30,41 @@ function cellTitle(cell: PlanCell): string {
   return parts.join(" · ");
 }
 
-type BlockData = { block: PlanBlock; node?: TopoNode; findings: number };
+/** What another view (the material flow) shows on a block or spot. */
+export interface PlanBadge {
+  /** Replaces the second line, e.g. stock or how busy the element is. */
+  sub?: string;
+  /** Load units waiting there. */
+  queue?: number;
+  bottleneck?: boolean;
+  marked?: boolean;
+}
+/** How another view draws a connection. */
+export interface LinkLook {
+  color?: string;
+  width?: number;
+  opacity?: number;
+}
+const badgeClass = (badge?: PlanBadge) => `${badge?.bottleneck ? " bottleneck" : ""}${badge?.marked ? " marked" : ""}`;
+const Queue = ({ badge }: { badge?: PlanBadge }) =>
+  badge?.queue ? <span className="sim-queue" title={t("sim.queueHint")} data-queue={badge.queue}>{badge.queue}</span> : null;
+
+type BlockData = { block: PlanBlock; node?: TopoNode; findings: number; badge?: PlanBadge };
 
 function BlockView({ data, selected }: NodeProps<Node<BlockData>>) {
-  const { block, node, findings } = data;
+  const { block, node, findings, badge } = data;
   const { cellId, onCell } = useContext(Context);
   return (
     <div
-      className={`plan-block${block.placed ? "" : " waiting"}${selected ? " selected" : ""}${findings ? " has-findings" : ""}`}
+      className={`plan-block${block.placed ? "" : " waiting"}${selected ? " selected" : ""}${findings ? " has-findings" : ""}${badgeClass(badge)}`}
       data-placed={block.placed}
       style={{ width: block.width, height: block.height }}
       data-plan-block={block.id}
     >
       <div className="plan-title">
-        <strong>{block.id}</strong> <span>{node ? subtitle(node) : ""}</span>
+        <strong>{block.id}</strong> <span>{badge?.sub ?? (node ? subtitle(node) : "")}</span>
       </div>
+      <Queue badge={badge} />
       {block.rows.map((row) => (
         <span key={row.aisle} className="plan-row" style={{ top: row.y, height: row.height }} title={t("plan.aisle", { n: row.aisle })}>
           G{String(row.aisle).padStart(2, "0")}
@@ -71,19 +91,20 @@ function BlockView({ data, selected }: NodeProps<Node<BlockData>>) {
   );
 }
 
-type SpotData = { spot: PlanSpot; node?: TopoNode; findings: number };
+type SpotData = { spot: PlanSpot; node?: TopoNode; findings: number; badge?: PlanBadge };
 
 function SpotView({ data, selected }: NodeProps<Node<SpotData>>) {
-  const { spot, node, findings } = data;
+  const { spot, node, findings, badge } = data;
   return (
     <div
-      className={`topo-node plan-spot kind-${spot.kind}${spot.placed ? "" : " waiting"}${selected ? " selected" : ""}${findings ? " has-findings" : ""}`}
+      className={`topo-node plan-spot kind-${spot.kind}${spot.placed ? "" : " waiting"}${selected ? " selected" : ""}${findings ? " has-findings" : ""}${badgeClass(badge)}`}
       data-placed={spot.placed}
       style={{ width: spot.width, height: spot.height }}
       data-plan-spot={spot.id}
     >
       <div className="topo-id">{spot.id}</div>
-      <div className="topo-sub">{node ? subtitle(node) : ""}</div>
+      <div className="topo-sub">{badge?.sub ?? (node ? subtitle(node) : "")}</div>
+      <Queue badge={badge} />
       {findings > 0 && <span className="topo-flag" title={t("topology.findings")}>{findings}</span>}
     </div>
   );
@@ -98,7 +119,7 @@ function HallView({ data }: NodeProps<Node<{ width: number; height: number; name
 }
 const nodeTypes = { block: BlockView, spot: SpotView, hall: HallView };
 
-export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell, editable = false, onMove }: {
+export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selectedId, cellId, onSelect, onCell, editable = false, onMove, badges, linkLook, children }: {
   plan: FloorPlan;
   name: string;
   /** The diagram's nodes, for the second line of each block and spot. */
@@ -113,6 +134,11 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
   /** Blocks and spots can be dragged; onMove gets the new upper left corner in plan pixels. */
   editable?: boolean;
   onMove?: (id: string, at: { x: number; y: number }) => void;
+  /** Marks on blocks and spots, by id. */
+  badges?: Map<string, PlanBadge>;
+  linkLook?: (link: PlanLink) => LinkLook;
+  /** Drawn on top of the plan, in plan pixels (e.g. moving load units). */
+  children?: ReactNode;
 }) {
   const lang = useLang();
   const flowNodes = useMemo<Node[]>(() => {
@@ -131,14 +157,14 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
         : []),
       ...plan.blocks.map((block) => ({
         id: block.id, type: "block", position: { x: block.x, y: block.y }, width: block.width, height: block.height,
-        data: { block, node: byId.get(block.id), findings: findingsOf(block.id) }, selected: block.id === selectedId,
+        data: { block, node: byId.get(block.id), findings: findingsOf(block.id), badge: badges?.get(block.id) }, selected: block.id === selectedId,
       })),
       ...plan.spots.map((spot) => ({
         id: spot.id, type: "spot", position: { x: spot.x, y: spot.y }, width: spot.width, height: spot.height,
-        data: { spot, node: byId.get(spot.id), findings: findingsOf(spot.id) }, selected: spot.id === selectedId,
+        data: { spot, node: byId.get(spot.id), findings: findingsOf(spot.id), badge: badges?.get(spot.id) }, selected: spot.id === selectedId,
       })),
     ];
-  }, [plan, nodes, name, selectedId, findingsOf, lang]);
+  }, [plan, nodes, name, selectedId, findingsOf, badges, lang]);
   const context = useMemo(() => ({ cellId, onCell }), [cellId, onCell]);
   // While editing, React Flow moves the nodes itself; the data follows on drop.
   const [live, setLive, onNodesChange] = useNodesState<Node>([]);
@@ -167,20 +193,25 @@ export function FloorPlanCanvas({ plan, name, nodes, findingsOf, colors, selecte
         <Controls showInteractive={false} />
         <ViewportPortal>
           <svg className="plan-links" width={plan.hall.width} height={plan.hall.height + 40} style={{ overflow: "visible" }}>
-            {plan.links.map((link) => (
-              <g key={link.id} data-plan-link={link.id}>
-                <line
-                  x1={link.x1} y1={link.y1} x2={link.x2} y2={link.y2}
-                  stroke={colors[link.mode ?? ""] ?? "#8a94a3"}
-                  strokeWidth={2.5}
-                  strokeDasharray={link.mode === "controller_internal" ? "6 4" : undefined}
-                />
-                <circle cx={link.x2} cy={link.y2} r={4} fill={colors[link.mode ?? ""] ?? "#8a94a3"} />
-                {link.both && <circle cx={link.x1} cy={link.y1} r={4} fill={colors[link.mode ?? ""] ?? "#8a94a3"} />}
-                <title>{`${link.from} ${link.both ? "↔" : "→"} ${link.to} · ${tl("mode", link.mode ?? "")}`}</title>
-              </g>
-            ))}
+            {plan.links.map((link) => {
+              const look = linkLook?.(link) ?? {};
+              const color = look.color ?? colors[link.mode ?? ""] ?? "#8a94a3";
+              return (
+                <g key={link.id} data-plan-link={link.id} opacity={look.opacity}>
+                  <line
+                    x1={link.x1} y1={link.y1} x2={link.x2} y2={link.y2}
+                    stroke={color}
+                    strokeWidth={look.width ?? 2.5}
+                    strokeDasharray={link.mode === "controller_internal" ? "6 4" : undefined}
+                  />
+                  <circle cx={link.x2} cy={link.y2} r={4} fill={color} />
+                  {link.both && <circle cx={link.x1} cy={link.y1} r={4} fill={color} />}
+                  <title>{`${link.from} ${link.both ? "↔" : "→"} ${link.to} · ${tl("mode", link.mode ?? "")}`}</title>
+                </g>
+              );
+            })}
           </svg>
+          {children}
         </ViewportPortal>
       </ReactFlow>
     </Context.Provider>

@@ -175,6 +175,10 @@ Concept, decisions and planned phases: [`docs/concept.md`](docs/concept.md).
     lead time. Per station it shows the queue, how busy the station is and
     the stock. A station that is 85 % busy or more is marked red as the
     bottleneck.
+  - **Two views:** "Hallenplan" shows the load units moving through the
+    hall plan, with stock, queues and the bottleneck on the areas.
+    "Flussdiagramm" shows the same simulation on the flow diagram. A hall
+    that states its layout opens on the hall plan.
   - **What limits the flow:**
     - a work center's `throughput_capacity`;
     - a reporting point's `capacity`;
