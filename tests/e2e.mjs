@@ -601,6 +601,49 @@ async function hallPlanTests(browser) {
   check((await image.count()) === 0 && (await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("plan-background:")).length)) === 0,
     "removing the image also removes it from the browser's storage");
 
+  // Dragging in hall 3, several times in a row (regressions: the node jumped back while the
+  // page re-checked; a node rebuilt after an edit lost its measured size and the next drag
+  // wrote NaN; a door on the wall drifted with the auto-panning view; a drag that started
+  // on a bay also opened that bay).
+  await page.getByLabel("Bearbeiten").check();
+  const nodeAt = (id) => page.locator(`.react-flow__node[data-id="${id}"]`).evaluate((n) => n.style.transform);
+  async function dragNode(id, grab, dx, dy) {
+    const target = page.locator(`[data-plan-block="${id}"], [data-plan-spot="${id}"]`).locator(grab);
+    await target.scrollIntoViewIfNeeded();
+    const box = await target.boundingBox();
+    const [x, y] = [box.x + Math.min(20, box.width / 2), box.y + box.height / 2];
+    const result = await editAndValidate(page, async () => {
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + dx, y + dy, { steps: 8 });
+      await page.mouse.up();
+      dropped = await nodeAt(id);
+    });
+    return { result, dropped, settled: await nodeAt(id) };
+  }
+  let dropped;
+  const startAt = await nodeAt("AUTOSTORE_A");
+  let moved = await dragNode("AUTOSTORE_A", ".plan-title", 0, 40);
+  check(moved.dropped !== startAt && moved.dropped === moved.settled, `a dropped area stays where it was dropped while the page re-checks (${startAt} -> ${moved.dropped} -> ${moved.settled})`);
+  moved = await dragNode("AUTOSTORE_A", ".plan-title", 0, -40);
+  check(moved.settled === startAt && moved.result === "ok", "dragging it back right after works and passes validate.py");
+  const door = await nodeAt("DOOR_03");
+  moved = await dragNode("DOOR_03", ".topo-id", -40, 0);
+  check(moved.result === "ok" && moved.settled.split(",")[1] === door.split(",")[1] && moved.settled !== door,
+    `a door on the wall moves along it without drifting off (${door} -> ${moved.settled})`);
+  const hbrAt = await nodeAt("HBR");
+  moved = await dragNode("HBR", '[data-plan-cell="HBR.F05-02"]', 0, 26);
+  const panel = await page.locator(".topo-details h3").first().textContent();
+  check(moved.settled !== hbrAt && moved.result === "ok" && panel === "HBR",
+    `a drag that starts on a bay moves the area and does not open the bay (${hbrAt} -> ${moved.settled}, ${moved.result}, panel ${panel})`);
+  check(!(await page.locator("[data-changes]").textContent()).includes("NaN") && (await page.locator('[data-topology="fresh"]').count()) === 1,
+    "after four drags the page is still checked and fresh");
+  while ((await page.locator("[data-changes] .change-log li").count()) > 0) {
+    await page.getByRole("button", { name: "Rückgängig" }).click();
+    await waitForCompile(page);
+  }
+  await page.getByLabel("Bearbeiten").uncheck();
+
   // A hall without layout data: calculated, then adopted and edited.
   await pick("/ LP01 /");
   await page.locator("[data-plan-block]").first().waitFor();

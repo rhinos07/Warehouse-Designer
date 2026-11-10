@@ -156,23 +156,26 @@ export function TopologyView({ buildings, findings, files, onChange, onChanges, 
     setForm(null);
     setError("");
   }
-  function attempt(make: () => Change) {
+  /** Applies an edit; false if it failed or changed nothing. */
+  function attempt(make: () => Change): boolean {
     try {
       const change = make();
-      if (files && files[change.path] === change.text) return; // nothing changed
+      if (files && files[change.path] === change.text) return false; // nothing changed
       onChange!(change);
       select(change.select ?? null);
+      return true;
     } catch (e) {
       setError(e instanceof EditError || e instanceof Error ? e.message : String(e));
+      return false;
     }
   }
 
   /** A block or spot was dropped at `at` (plan pixels): write its new place. */
-  function movePlan(id: string, at: { x: number; y: number }) {
-    if (!plan || !files) return;
+  function movePlan(id: string, at: { x: number; y: number }): boolean {
+    if (!plan || !files) return false;
     const block = plan.blocks.find((b) => b.id === id);
     const spot = plan.spots.find((sp) => sp.id === id);
-    attempt(() => {
+    return attempt(() => {
       let change: Change;
       if (block) {
         const stated = footprintOf(graph?.nodes.find((n) => n.id === id)?.entity);
@@ -188,9 +191,9 @@ export function TopologyView({ buildings, findings, files, onChange, onChanges, 
   }
 
   /** A block was resized by its handles to `box` (plan pixels): write its footprint. */
-  function resizePlan(id: string, box: { x: number; y: number; width: number; height: number }) {
-    if (!files) return;
-    attempt(() => placeStorageType(building, files, id, {
+  function resizePlan(id: string, box: { x: number; y: number; width: number; height: number }): boolean {
+    if (!files) return false;
+    return attempt(() => placeStorageType(building, files, id, {
       x: box.x / PX_PER_M, y: box.y / PX_PER_M, width: box.width / PX_PER_M, depth: box.height / PX_PER_M,
     }));
   }
@@ -477,7 +480,8 @@ export function TopologyView({ buildings, findings, files, onChange, onChanges, 
                 plan={plan}
                 name={`${building.name ?? building.building ?? ""}${plan.layout ? ` · ${plan.layout.width} × ${plan.layout.depth} m` : ""}`}
                 background={background}
-                editable={planEdit && !busy}
+                editable={planEdit}
+                locked={busy}
                 onMove={movePlan}
                 onResize={resizePlan}
                 nodes={graph.nodes}

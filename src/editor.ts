@@ -195,7 +195,13 @@ export interface Box {
   depth: number;
 }
 
+/** Layout values must be numbers: a NaN written to YAML breaks the compile step. */
+function finite(...values: number[]) {
+  if (!values.every(Number.isFinite)) throw new EditError(t("editor.badPlace"));
+}
+
 function withFootprint(text: string, id: string, box: Box): string {
+  finite(box.x, box.y, box.width, box.depth);
   const item = getItem(text, "storage_types", id);
   return updateItem(text, "storage_types", id, {
     ...item,
@@ -204,6 +210,7 @@ function withFootprint(text: string, id: string, box: Box): string {
 }
 
 function withPosition(text: string, key: string, id: string, at: { x: number; y: number }): string {
+  finite(at.x, at.y);
   const item = getItem(text, key, id);
   const old = (item.position ?? {}) as Record<string, Value>;
   // Keep a stated height (z).
@@ -211,6 +218,7 @@ function withPosition(text: string, key: string, id: string, at: { x: number; y:
 }
 
 function withLayout(text: string, size: { width: number; depth: number }): string {
+  finite(size.width, size.depth);
   return updateTop(text, "warehouse", { ...getTop(text, "warehouse"), layout: { width: m(snapUp(size.width)), depth: m(snapUp(size.depth)) } });
 }
 

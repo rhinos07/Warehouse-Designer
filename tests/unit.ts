@@ -518,6 +518,13 @@ const placedType = (readYaml(placed.text).storage_types as { id: string; footpri
 check(JSON.stringify(placedType.footprint) === JSON.stringify({ position: { x: len(3.5), y: len(0) }, width: len(9.5), depth: len(4) }),
   `placing a storage type writes its footprint on the 0.5 m grid (${JSON.stringify(placedType.footprint)})`);
 check(changedLines(lpFiles[placed.path], placed.text) <= 6, "placing changes only the footprint's lines");
+let refused = "";
+try {
+  placeStorageType(lpBuilding, lpFiles, firstType, { x: Number.NaN, y: 0, width: 5, depth: 5 });
+} catch (error) {
+  refused = String((error as Error).message);
+}
+check(refused.length > 0, "a layout edit with NaN is refused, so no NaN reaches the files");
 const doorMove = placeSpot(lpBuilding, lpFiles, "door", firstDoor, { x: 12.24, y: 30 });
 check(JSON.stringify((readYaml(doorMove.text).doors as { id: string; position?: unknown }[]).find((d) => d.id === firstDoor)!.position) === JSON.stringify({ x: len(12), y: len(30) }),
   "placing a door writes its position");
