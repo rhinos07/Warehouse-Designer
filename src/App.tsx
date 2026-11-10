@@ -273,6 +273,12 @@ export default function App() {
     changeData([...edits, { key: `${TOPOLOGY}/${change.path}`, text: change.text, summary: change.summary }]);
   }
 
+  /** Changes to several files made together, as one edit to undo. */
+  function applyChanges(changes: Change[]) {
+    const group = Date.now();
+    changeData([...edits, ...changes.map((c) => ({ key: `${TOPOLOGY}/${c.path}`, text: c.text, summary: c.summary, group }))]);
+  }
+
   /** A new building's files (and its facility.yaml), as one edit to undo. */
   function createBuilding(building: CreatedBuilding) {
     const group = Date.now();
@@ -398,6 +404,7 @@ export default function App() {
                 findings={topologyFindings}
                 files={topologyFiles}
                 onChange={applyChange}
+                onChanges={applyChanges}
                 onCreate={createBuilding}
                 onOpen={(target) => {
                   setFocus({ repo: TOPOLOGY, ...target });

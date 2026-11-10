@@ -18,8 +18,8 @@ import { AmlImport, type CreatedBuilding } from "./AmlImportPanel";
 import { toAutomationML } from "./automationml";
 import { EditPanel, type Form } from "./EditPanel";
 import { CellDetails, FloorPlanCanvas, PlanLegend } from "./HallPlan";
-import { floorPlan, type PlanCell } from "./floorplan";
-import { EditError, ENDPOINT_KINDS, HOME, removeLink, removeNode, usages, type Change, type Files } from "./editor";
+import { floorPlan, footprintOf, PX_PER_M, type PlanCell } from "./floorplan";
+import { adoptPlan, EditError, ENDPOINT_KINDS, HOME, placeSpot, placeStorageType, removeLink, removeNode, setLayout, usages, type Change, type Files } from "./editor";
 import { buildGraph, findingsFor, kindLabel, modeLabel, MODES, subtitle, type NodeKind, type TopoEdge, type TopoNode } from "./graph";
 import { t, tl, tn, useLang } from "./i18n";
 import type { Building, Catalog, Entity } from "./types";
@@ -58,12 +58,14 @@ function TopoNodeView({ data, selected }: NodeProps<Node<TopoNodeData>>) {
 }
 const nodeTypes = { topo: TopoNodeView };
 
-export function TopologyView({ buildings, findings, files, onChange, onCreate, onOpen, catalog, busy = false }: {
+export function TopologyView({ buildings, findings, files, onChange, onChanges, onCreate, onOpen, catalog, busy = false }: {
   buildings: Building[];
   findings: string[];
   /** Topology-as-Code files by repo path; with onChange, the diagram can be edited. */
   files?: Files;
   onChange?: (change: Change) => void;
+  /** Changes to several files, applied and undone together. */
+  onChanges?: (changes: Change[]) => void;
   /** Adds the files of a new building, e.g. from an AutomationML import. */
   onCreate?: (created: CreatedBuilding) => void;
   /** Opens an element's entry in the data tab's form. */
@@ -97,8 +99,10 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
     return () => cancelAnimationFrame(frame);
   }, [flow, nodeCount]);
   const canEdit = Boolean(files && onChange && building?.ok && building.sources);
-  // The hall plan only shows; editing stays in the flow diagram.
+  // Editing the flow diagram changes elements and connections; editing the hall plan changes where things stand.
   const edit = editing && canEdit && view === "flow";
+  const planEdit = editing && canEdit && view === "plan";
+  const [hallSize, setHallSize] = useState({ width: "", depth: "" });
   const plan = useMemo(() => (view === "plan" && building?.ok && graph ? floorPlan(building, graph) : null), [view, building, graph]);
   const findingCount = useCallback((id: string) => findingsFor(id, findings).length, [findings]);
   const chooseCell = useCallback((block: string, chosen: PlanCell) => {
@@ -153,11 +157,32 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
   function attempt(make: () => Change) {
     try {
       const change = make();
+      if (files && files[change.path] === change.text) return; // nothing changed
       onChange!(change);
       select(change.select ?? null);
     } catch (e) {
       setError(e instanceof EditError || e instanceof Error ? e.message : String(e));
     }
+  }
+
+  /** A block or spot was dropped at `at` (plan pixels): write its new place. */
+  function movePlan(id: string, at: { x: number; y: number }) {
+    if (!plan || !files) return;
+    const block = plan.blocks.find((b) => b.id === id);
+    const spot = plan.spots.find((sp) => sp.id === id);
+    attempt(() => {
+      let change: Change;
+      if (block) {
+        const stated = footprintOf(graph?.nodes.find((n) => n.id === id)?.entity);
+        change = placeStorageType(building, files, id, {
+          x: at.x / PX_PER_M, y: at.y / PX_PER_M,
+          width: stated?.width ?? block.width / PX_PER_M, depth: stated?.depth ?? block.height / PX_PER_M,
+        });
+      } else if (spot) {
+        change = placeSpot(building, files, spot.kind, id, { x: (at.x + spot.width / 2) / PX_PER_M, y: (at.y + spot.height / 2) / PX_PER_M });
+      } else throw new EditError(id);
+      return change;
+    });
   }
 
   const lang = useLang();
@@ -229,9 +254,9 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
     const used = removable ? usages(building, files!, selected.id) : [];
     aside = (
       <Details node={selected} building={building} graph={graph} findings={findingsFor(selected.id, findings)}>
-        {edit && (
+        {(edit || planEdit) && (
           <div className="edit-actions">
-            {ENDPOINT_KINDS.includes(selected.kind) && (
+            {edit && ENDPOINT_KINDS.includes(selected.kind) && (
               <button onClick={() => setForm({ type: "connection", from: selected.id })} disabled={busy}>{t("topology.addConnection")}</button>
             )}
             {onOpen && home && homePath && (
@@ -257,7 +282,7 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
   } else {
     aside = (
       <p className="hint">
-        {edit ? t("topology.hintEdit") : view === "plan" ? t("plan.hint") : t("topology.hintView")}
+        {edit ? t("topology.hintEdit") : planEdit ? t("plan.hintEdit") : view === "plan" ? t("plan.hint") : t("topology.hintView")}
       </p>
     );
   }
@@ -304,7 +329,7 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
             <input type="checkbox" checked={showRules} onChange={(e) => setShowRules(e.target.checked)} /> {t("topology.showRules")}
           </label>
         )}
-        {view === "flow" && files && onChange && (
+        {files && onChange && (
           <label>
             <input
               type="checkbox"
@@ -322,6 +347,53 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
             <button className="secondary" onClick={() => setForm({ type: "door" })} disabled={busy}>{t("topology.addDoor")}</button>
             <button className="secondary" onClick={() => setForm({ type: "work_center" })} disabled={busy}>{t("topology.addWorkCenter")}</button>
             <button className="secondary" onClick={() => setForm({ type: "reporting_point" })} disabled={busy}>{t("topology.addReportingPoint")}</button>
+          </div>
+        )}
+        {planEdit && plan && (
+          <div className="actions plan-actions">
+            {onChanges && (
+              <button
+                className="secondary"
+                onClick={() => {
+                  try {
+                    const changes = adoptPlan(building, files!, plan);
+                    if (changes.length) onChanges(changes);
+                    setError("");
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  }
+                }}
+                disabled={busy || (Boolean(plan.layout) && !plan.waiting)}
+                title={t("plan.adoptHint")}
+                data-plan-adopt
+              >
+                {t("plan.adopt")}
+              </button>
+            )}
+            <label>
+              {t("plan.hallSize")}{" "}
+              <input
+                type="number" min={1} step={0.5} placeholder={plan.layout ? String(plan.layout.width) : t("plan.width")}
+                value={hallSize.width} onChange={(e) => setHallSize({ ...hallSize, width: e.target.value })} data-plan-hall-width
+              />{" × "}
+              <input
+                type="number" min={1} step={0.5} placeholder={plan.layout ? String(plan.layout.depth) : t("plan.depth")}
+                value={hallSize.depth} onChange={(e) => setHallSize({ ...hallSize, depth: e.target.value })} data-plan-hall-depth
+              />{" m "}
+            </label>
+            <button
+              className="secondary"
+              onClick={() => {
+                attempt(() => setLayout(building, files!, {
+                  width: Number(hallSize.width || plan.layout?.width), depth: Number(hallSize.depth || plan.layout?.depth),
+                }));
+                setHallSize({ width: "", depth: "" });
+              }}
+              disabled={busy || (!hallSize.width && !hallSize.depth)}
+              data-plan-set-hall
+            >
+              {t("plan.setHall")}
+            </button>
           </div>
         )}
         {building.ok && (
@@ -370,7 +442,9 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
 
       {plan && (
         <p className="status plan-note" data-plan-note>
-          {t("plan.schematic")}
+          {plan.real ? t("plan.real") : t("plan.schematic")}
+          {plan.real && !plan.layout && ` ${t("plan.noLayout")}`}
+          {plan.waiting && ` ${t("plan.waitingNote")}`}
           {plan.assumed > 0 && ` ${tn("plan.assumedCount", plan.assumed)}`}
           {plan.flatRacks.length > 0 && ` ${t("plan.flatRacks", { ids: plan.flatRacks.join(", ") })}`}
         </p>
@@ -383,7 +457,9 @@ export function TopologyView({ buildings, findings, files, onChange, onCreate, o
               <FloorPlanCanvas
                 key={`plan:${building.path}`}
                 plan={plan}
-                name={building.name ?? building.building ?? ""}
+                name={`${building.name ?? building.building ?? ""}${plan.layout ? ` · ${plan.layout.width} × ${plan.layout.depth} m` : ""}`}
+                editable={planEdit && !busy}
+                onMove={movePlan}
                 nodes={graph.nodes}
                 findingsOf={findingCount}
                 colors={EDGE_COLOR}

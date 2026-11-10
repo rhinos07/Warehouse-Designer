@@ -267,6 +267,10 @@ const RULES: Rule[] = [
   [/^scan code '([^']*)' is used by both '([^']*)' and '([^']*)'$/, (m) => `Scan-Code ${q(m[1])} ist doppelt vergeben: ${q(m[2])} und ${q(m[3])}.`],
   [/^scan code for unknown storage_point '([^']*)'$/, (m) => `Scan-Code für den unbekannten Lagerplatz ${q(m[1])}.`],
   [/^has more than one scan code$/, () => "Hat mehr als einen Scan-Code."],
+  [/^footprint \(([^)]*)\) lies outside warehouse\.layout \(([^)]*)\)$/, (m) => `Die Fläche (${m[1]}) liegt außerhalb der Halle (${m[2]}).`],
+  [/^footprint overlaps the footprint of storage_type '([^']*)'$/, (m) => `Die Fläche überlappt die Fläche des Lagertyps ${q(m[1])}.`],
+  [/^position \(([^)]*)\) lies outside warehouse\.layout \(([^)]*)\)$/, (m) => `Die Position (${m[1]}) liegt außerhalb der Halle (${m[2]}).`],
+  [/^position \(([^)]*)\) lies outside the storage_type's footprint \(([^)]*)\)$/, (m) => `Die Position (${m[1]}) liegt außerhalb der Fläche des Lagertyps (${m[2]}).`],
   [/^staging_section '([^']*)' is not in '([^']*)' format$/, (m) => `staging_section ${q(m[1])} hat nicht das Format ${m[2]}.`],
   [/^duplicate (?:[a-z_]+ )*?([a-z_]+) id '([^']*)'$/, (m) => `${thing(m[1])} ${q(m[2])} gibt es mehrfach.`],
   [/^reporting_point storage_point_ref id '([^']*)' collides with a compiled storage_point id$/, (m) => `Meldepunkt ${q(m[1])}: Sein Lagerplatz (storage_point_ref) hat dieselbe ID wie ein erzeugter Lagerplatz.`],
@@ -543,7 +547,7 @@ function explainIn(raw: string): Finding {
     where.push(ENTITY[field[1]] ?? fieldPath(field[1]));
     rest = field[2];
   }
-  const exception = /^exception at '([^']*)':\s+([\s\S]*)$/.exec(rest);
+  const exception = /^exception(?: at)? '([^']*)':\s+([\s\S]*)$/.exec(rest);
   if (exception) {
     where.push(`Ausnahme bei ${q(exception[1])}`);
     rest = exception[2];
